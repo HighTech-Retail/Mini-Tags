@@ -63,35 +63,80 @@ def extract_text_from_pdf(pdf_path):
         st.error(f"Error in OCR processing: {str(e)}")
         return None
 
+def clean_text(text):
+    """Clean up OCR artifacts and normalize text"""
+    # Remove any lines that are just garbage (short lines with random chars)
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Keep lines that have meaningful content
+        if any([
+            'Model #:' in line,
+            'Regular Price:' in line,
+            'Hearth >' in line,
+            len(line) > 20  # Likely a product description
+        ]):
+            cleaned_lines.append(line)
+    return '\n'.join(cleaned_lines)
+
 def parse_pdf_content(text):
-    # Debug: Show the text we're trying to parse
-    st.write("Attempting to parse the following text:")
-    st.code(text)
+    # Clean the text first
+    cleaned_text = clean_text(text)
+    
+    # Debug: Show the cleaned text
+    st.write("Cleaned text:")
+    st.code(cleaned_text)
     
     tags = []
     
-    # New pattern matching your PDF format
-    pattern = r"Model #: ([^\n]+)\n([^\n]+?)\nRegular Price: \$([0-9.]+)"
-    st.write("Current regex pattern:", pattern)
+    # Split text into product blocks
+    blocks = cleaned_text.split('Hearth >')
+    blocks = [b for b in blocks if b.strip()]  # Remove empty blocks
     
-    matches = re.finditer(pattern, text, re.MULTILINE | re.DOTALL)
-    matches_list = list(matches)
-    st.write(f"Number of matches found: {len(matches_list)}")
+    for block in blocks:
+        try:
+            # Extract model number
+            model_match = re.search(r'Model #: ([^\n]+)', block)
+            if not model_match:
+                continue
+            sku = model_match.group(1).strip()
+            
+            # Extract price
+            price_match = re.search(r'Regular Price: \$([0-9.]+)', block)
+            if not price_match:
+                continue
+            price = price_match.group(1).strip()
+            
+            # Extract product name (everything between model and price)
+            lines = block.split('\n')
+            model_idx = next(i for i, line in enumerate(lines) if 'Model #:' in line)
+            price_idx = next(i for i, line in enumerate(lines) if 'Regular Price:' in line)
+            
+            # Get product name from lines between model and price
+            product_name = ' '.join(line.strip() for line in lines[model_idx+1:price_idx] if line.strip())
+            
+            # Generate barcode from model number
+            barcode = ''.join(filter(str.isalnum, sku))
+            
+            # Get category
+            category = block.split('\n')[0].strip()
+            
+            # Debug: Show what we found
+            st.write(f"Found product: {product_name} (SKU: {sku}, Price: ${price})")
+            
+            tags.append({
+                "productName": product_name,
+                "price": price,
+                "sku": sku,
+                "barcode": barcode,
+                "description": f"Category: {category}"
+            })
+            
+        except Exception as e:
+            st.write(f"Error processing block: {str(e)}")
+            continue
     
-    for match in matches_list:
-        # Debug: Show what we matched
-        st.write("Found match:", match.groups())
-        
-        # Generate a barcode from the model number
-        barcode = ''.join(filter(str.isalnum, match.group(1)))  # Strip non-alphanumeric chars
-        
-        tags.append({
-            "productName": match.group(2).strip(),
-            "price": match.group(3).strip(),
-            "sku": match.group(1).strip(),
-            "barcode": barcode,
-            "description": f"Category: {text.split('>')[1].split('\n')[0].strip() if '>' in text else 'Hearth'}"
-        })
+    st.write(f"Total tags found: {len(tags)}")
     return tags
 
 if uploaded_file:
