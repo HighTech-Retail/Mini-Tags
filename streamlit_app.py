@@ -79,80 +79,79 @@ def clean_text(text):
             cleaned_lines.append(line)
     return '\n'.join(cleaned_lines)
 
-def split_dual_line(line):
-    """Split a line that contains two products side by side"""
-    if 'Model #:' in line:
-        parts = line.split('Model #:')
-        return ['Model #:' + p for p in parts if p.strip()]
-    elif 'Regular Price:' in line:
-        parts = line.split('Regular Price:')
-        return ['Regular Price:' + p for p in parts if p.strip()]
-    elif 'Hearth >' in line:
-        parts = line.split('Hearth >')
-        return ['Hearth >' + p for p in parts if p.strip()]
-    else:
-        # For product description lines, split at reasonable points
-        if len(line) > 40:  # Long enough to potentially contain two products
-            mid = len(line) // 2
-            # Try to find a good split point near the middle
-            split_point = line.find('  ', mid - 10, mid + 10)
-            if split_point != -1:
-                return [line[:split_point].strip(), line[split_point:].strip()]
-        return [line]
-
 def parse_pdf_content(text):
-    # Clean the text first
-    cleaned_text = clean_text(text)
-    
     # Debug: Show the cleaned text
-    st.write("Cleaned text:")
-    st.code(cleaned_text)
+    st.write("Raw text:")
+    st.code(text)
     
     tags = []
-    current_product = {}
-    lines = cleaned_text.split('\n')
-    
+    lines = text.split('\n')
     i = 0
+    
     while i < len(lines):
-        line = lines[i].strip()
-        if not line:
+        try:
+            line = lines[i].strip()
+            
+            # Look for a pair of Model numbers
+            if 'Model #:' in line:
+                # Split into left and right products
+                left_model = line.split('Model #:')[1].split('Model #:')[0].strip()
+                right_model = line.split('Model #:')[2].strip() if 'Model #:' in line.split('Model #:')[1] else None
+                
+                # Get categories from previous line
+                categories = lines[i-1].split('Hearth >')[1:]
+                left_category = f"Hearth >{categories[0].strip()}" if categories else "Hearth"
+                right_category = f"Hearth >{categories[1].strip()}" if len(categories) > 1 else "Hearth"
+                
+                # Get product names from next line
+                product_names = lines[i+1].strip().split('  ')
+                left_name = product_names[0].strip()
+                right_name = product_names[1].strip() if len(product_names) > 1 else ""
+                
+                # Get prices from next line containing "Regular Price:"
+                price_line = lines[i+2] if 'Regular Price:' in lines[i+2] else lines[i+3]
+                prices = price_line.split('Regular Price: $')
+                left_price = prices[1].split()[0].strip() if len(prices) > 1 else ""
+                right_price = prices[2].split()[0].strip() if len(prices) > 2 else ""
+                
+                # Create left product
+                if left_model and left_price:
+                    tags.append({
+                        "sku": left_model,
+                        "productName": left_name,
+                        "price": left_price,
+                        "barcode": ''.join(filter(str.isalnum, left_model)),
+                        "description": left_category
+                    })
+                
+                # Create right product
+                if right_model and right_price:
+                    tags.append({
+                        "sku": right_model,
+                        "productName": right_name,
+                        "price": right_price,
+                        "barcode": ''.join(filter(str.isalnum, right_model)),
+                        "description": right_category
+                    })
+                
+                # Skip to next product pair
+                i += 3
+            
+            i += 1
+            
+        except Exception as e:
+            st.write(f"Error processing line {i}: {str(e)}")
             i += 1
             continue
-            
-        # Split line if it contains two products
-        split_lines = split_dual_line(line)
-        
-        for split_line in split_lines:
-            if 'Hearth >' in split_line:
-                if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
-                    tags.append(current_product)
-                current_product = {'category': split_line.strip()}
-            
-            elif 'Model #:' in split_line:
-                if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
-                    tags.append(current_product)
-                current_product = {'category': current_product.get('category', 'Hearth')}
-                current_product['sku'] = split_line.replace('Model #:', '').strip()
-                current_product['barcode'] = ''.join(filter(str.isalnum, current_product['sku']))
-            
-            elif 'Regular Price:' in split_line:
-                price_str = split_line.replace('Regular Price:', '').replace('$', '').strip()
-                if price_str:
-                    current_product['price'] = price_str
-            
-            elif split_line and current_product and 'sku' in current_product and 'productName' not in current_product:
-                current_product['productName'] = split_line.strip()
-        
-        i += 1
-    
-    # Add the last product if complete
-    if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
-        tags.append(current_product)
     
     # Debug output
-    st.write(f"Total tags found: {len(tags)}")
+    st.write(f"\nTotal tags found: {len(tags)}")
     for tag in tags:
-        st.write(f"Found product: {tag['productName']} (SKU: {tag['sku']}, Price: ${tag['price']})")
+        st.write(f"\nFound product:")
+        st.write(f"- Name: {tag['productName']}")
+        st.write(f"- SKU: {tag['sku']}")
+        st.write(f"- Price: ${tag['price']}")
+        st.write(f"- Category: {tag['description']}")
     
     return tags
 
