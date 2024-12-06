@@ -1,13 +1,116 @@
 import streamlit as st
 import json
 import io
+import tempfile
+import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 from reportlab.graphics.barcode import code128
+from PyPDF2 import PdfReader
+from pdf2image import convert_from_path
+import pytesseract
+import re
 
 st.set_page_config(page_title="Price Tag Generator", layout="wide")
 
 st.title("Price Tag Generator 🏷️")
+
+# Initialize session state
+if 'tags' not in st.session_state:
+    st.session_state.tags = []
+if 'uploaded_pdf_text' not in st.session_state:
+    st.session_state.uploaded_pdf_text = None
+
+# File upload section
+st.header("Upload Source PDF")
+uploaded_file = st.file_uploader("Choose a PDF file", type=['pdf'])
+
+def extract_text_from_pdf(pdf_path):
+    try:
+        # Convert PDF to images with higher DPI for better OCR
+        images = convert_from_path(
+            pdf_path,
+            dpi=300,  # Higher DPI for better quality
+            fmt='png'  # PNG format for better quality
+        )
+        
+        # Configure tesseract parameters for better accuracy
+        custom_config = r'--oem 3 --psm 6'
+        
+        text = ""
+        for i, image in enumerate(images):
+            # Enhance image for better OCR
+            # Convert to RGB if not already
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Extract text with custom configuration
+            page_text = pytesseract.image_to_string(
+                image, 
+                config=custom_config,
+                lang='eng'  # Specify English language
+            )
+            
+            text += f"\n--- Page {i+1} ---\n{page_text}\n"
+            
+            # Show processed image in expander (for debugging)
+            with st.expander(f"Show processed image - Page {i+1}"):
+                st.image(image, caption=f"Processed Page {i+1}", use_column_width=True)
+        
+        return text
+    
+    except Exception as e:
+        st.error(f"Error in OCR processing: {str(e)}")
+        return None
+
+def parse_pdf_content(text):
+    # Add your parsing logic here based on the PDF structure
+    # This is a placeholder - adjust based on your PDF format
+    tags = []
+    # Example pattern - adjust based on your PDF structure
+    pattern = r"Product: (.*?)\nPrice: \$(.*?)\nSKU: (.*?)\nBarcode: (\d+)"
+    matches = re.finditer(pattern, text, re.MULTILINE)
+    
+    for match in matches:
+        tags.append({
+            "productName": match.group(1).strip(),
+            "price": match.group(2).strip(),
+            "sku": match.group(3).strip(),
+            "barcode": match.group(4).strip(),
+            "description": ""
+        })
+    return tags
+
+if uploaded_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        tmp_file_path = tmp_file.name
+    
+    try:
+        # Extract text from PDF
+        extracted_text = extract_text_from_pdf(tmp_file_path)
+        st.session_state.uploaded_pdf_text = extracted_text
+        
+        # Parse the extracted text
+        parsed_tags = parse_pdf_content(extracted_text)
+        
+        if parsed_tags:
+            st.success(f"Successfully extracted {len(parsed_tags)} tags from PDF!")
+            if st.button("Add extracted tags"):
+                st.session_state.tags.extend(parsed_tags)
+                st.rerun()
+        else:
+            st.warning("No tags found in the PDF. Check the format and try again.")
+        
+        # Show extracted text in expander for debugging
+        with st.expander("Show extracted text"):
+            st.text(extracted_text)
+    
+    except Exception as e:
+        st.error(f"Error processing PDF: {str(e)}")
+    finally:
+        # Cleanup
+        os.unlink(tmp_file_path)
 
 # Sidebar for settings
 with st.sidebar:
@@ -22,10 +125,6 @@ with st.sidebar:
 
 # Main content
 st.header("Product Information")
-
-# Initialize session state for tags
-if 'tags' not in st.session_state:
-    st.session_state.tags = []
 
 # Form for adding new tags
 with st.form("new_tag"):
