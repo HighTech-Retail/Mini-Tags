@@ -252,14 +252,15 @@ def generate_pdf():
         y_position = top_margin
         
         for tag in group:
-            # Draw tag border (optional)
-            # c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
-            
             # Draw blue bar at bottom of tag
             c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
             c.rect(left_margin, y_position - tag_height + 0.1*inch, 
                   tag_width, 0.2*inch, fill=1)
             c.setFillColorRGB(0, 0, 0)  # Back to black
+            
+            # Draw tag border
+            c.setLineWidth(1)  # 1 point line width
+            c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
             
             # Draw product name in bold, centered
             c.setFont('Helvetica-Bold', 12)
