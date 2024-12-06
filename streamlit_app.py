@@ -156,24 +156,31 @@ if uploaded_file:
     
     try:
         # Process the PDF and get tags
-        tags = extract_text_from_pdf(tmp_file_path)
+        with st.expander("🔍 Processing Details", expanded=False):
+            st.write("Processing PDF pages...")
+            tags = extract_text_from_pdf(tmp_file_path)
+            st.write(f"\nTotal tags found: {len(tags)}")
         
-        st.write(f"\nTotal tags found: {len(tags)}")
-        for tag in tags:
-            st.write(f"\nFound product:")
-            st.write(f"- Name: {tag['productName']}")
-            st.write(f"- SKU: {tag['sku']}")
-            st.write(f"- Price: ${tag['price']}")
-            st.write(f"- Category: {tag['description']}")
+        with st.expander("📋 Found Products", expanded=False):
+            for tag in tags:
+                st.write("---")
+                st.write(f"**Product:** {tag['productName']}")
+                cols = st.columns(2)
+                with cols[0]:
+                    st.write(f"SKU: {tag['sku']}")
+                with cols[1]:
+                    st.write(f"Price: ${tag['price']}")
+                if 'description' in tag:
+                    st.write(f"Category: {tag['description']}")
         
         if tags:
             st.session_state.tags = tags
-            st.success(f"Successfully extracted {len(tags)} tags!")
+            st.success(f"✅ Successfully extracted {len(tags)} tags!")
         else:
-            st.warning("No tags found in the PDF. Check the format and try again.")
+            st.warning("⚠️ No tags found in the PDF. Check the format and try again.")
         
     except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
+        st.error(f"❌ Error processing PDF: {str(e)}")
     finally:
         # Cleanup
         os.unlink(tmp_file_path)
