@@ -1,0 +1,20 @@
+{
+    "tagSize": "4x1.5",
+    "template": "TagDraft1.pdf",
+    "tags": [
+        {
+            "productName": "Sample Product",
+            "price": "19.99",
+            "sku": "SP001",
+            "barcode": "123456789",
+            "description": "Sample product description"
+        }
+    ],
+    "settings": {
+        "fontName": "Helvetica",
+        "fontSize": 12,
+        "priceSize": 16,
+        "margin": 0.25,
+        "barcodeType": "Code128"
+    }
+}
