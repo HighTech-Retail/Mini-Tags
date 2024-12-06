@@ -10,6 +10,7 @@ from PyPDF2 import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
 import re
+from PIL import Image
 
 st.set_page_config(page_title="Price Tag Generator", layout="wide")
 
@@ -21,69 +22,33 @@ if 'tags' not in st.session_state:
 if 'uploaded_pdf_text' not in st.session_state:
     st.session_state.uploaded_pdf_text = None
 
-# File upload section
-st.header("Upload Source PDF")
-uploaded_file = st.file_uploader("Choose a PDF file", type=['pdf'])
-
-def extract_text_from_pdf(pdf_path):
-    try:
-        # Convert PDF to images with higher DPI for better OCR
-        images = convert_from_path(
-            pdf_path,
-            dpi=300,  # Higher DPI for better quality
-            fmt='png'  # PNG format for better quality
-        )
-        
-        # Configure tesseract parameters for better accuracy
-        custom_config = r'--oem 3 --psm 6'
-        
-        text = ""
-        for i, image in enumerate(images):
-            # Enhance image for better OCR
-            # Convert to RGB if not already
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Extract text with custom configuration
-            page_text = pytesseract.image_to_string(
-                image, 
-                config=custom_config,
-                lang='eng'  # Specify English language
-            )
-            
-            text += f"\n--- Page {i+1} ---\n{page_text}\n"
-            
-            # Show processed image in expander (for debugging)
-            with st.expander(f"Show processed image - Page {i+1}"):
-                st.image(image, caption=f"Processed Page {i+1}", use_column_width=True)
-        
-        return text
+def split_image_and_extract_text(image):
+    """Split the image down the middle and extract text from both halves"""
+    width, height = image.size
+    mid_point = width // 2
     
-    except Exception as e:
-        st.error(f"Error in OCR processing: {str(e)}")
-        return None
-
-def clean_text(text):
-    """Clean up OCR artifacts and normalize text"""
-    # Remove any lines that are just garbage (short lines with random chars)
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # Keep lines that have meaningful content
-        if any([
-            'Model #:' in line,
-            'Regular Price:' in line,
-            'Hearth >' in line,
-            len(line) > 20  # Likely a product description
-        ]):
-            cleaned_lines.append(line)
-    return '\n'.join(cleaned_lines)
-
-def parse_pdf_content(text):
-    # Debug: Show the cleaned text
-    st.write("Raw text:")
-    st.code(text)
+    # Split into left and right halves
+    left_half = image.crop((0, 0, mid_point, height))
+    right_half = image.crop((mid_point, 0, width, height))
     
+    # Extract text from each half
+    custom_config = r'--oem 3 --psm 6'
+    left_text = pytesseract.image_to_string(left_half, config=custom_config)
+    right_text = pytesseract.image_to_string(right_half, config=custom_config)
+    
+    # Debug: Show the split images
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("Left Half:")
+        st.image(left_half)
+    with col2:
+        st.write("Right Half:")
+        st.image(right_half)
+    
+    return left_text, right_text
+
+def parse_half_page(text):
+    """Parse text from one half of the page"""
     tags = []
     lines = text.split('\n')
     i = 0
@@ -92,51 +57,35 @@ def parse_pdf_content(text):
         try:
             line = lines[i].strip()
             
-            # Look for a pair of Model numbers
             if 'Model #:' in line:
-                # Split into left and right products
-                left_model = line.split('Model #:')[1].split('Model #:')[0].strip()
-                right_model = line.split('Model #:')[2].strip() if 'Model #:' in line.split('Model #:')[1] else None
+                # Get category from previous lines
+                category = "Hearth"
+                for j in range(i-1, max(0, i-3), -1):
+                    if 'Hearth >' in lines[j]:
+                        category = lines[j].strip()
+                        break
                 
-                # Get categories from previous line
-                categories = lines[i-1].split('Hearth >')[1:]
-                left_category = f"Hearth >{categories[0].strip()}" if categories else "Hearth"
-                right_category = f"Hearth >{categories[1].strip()}" if len(categories) > 1 else "Hearth"
+                # Get model number
+                sku = line.replace('Model #:', '').strip()
                 
-                # Get product names from next line
-                product_names = lines[i+1].strip().split('  ')
-                left_name = product_names[0].strip()
-                right_name = product_names[1].strip() if len(product_names) > 1 else ""
+                # Get product name from next line
+                product_name = lines[i+1].strip() if i+1 < len(lines) else ""
                 
-                # Get prices from next line containing "Regular Price:"
-                price_line = lines[i+2] if 'Regular Price:' in lines[i+2] else lines[i+3]
-                prices = price_line.split('Regular Price: $')
-                left_price = prices[1].split()[0].strip() if len(prices) > 1 else ""
-                right_price = prices[2].split()[0].strip() if len(prices) > 2 else ""
+                # Get price from next lines
+                price = ""
+                for j in range(i+1, min(len(lines), i+4)):
+                    if 'Regular Price: $' in lines[j]:
+                        price = lines[j].replace('Regular Price: $', '').strip()
+                        break
                 
-                # Create left product
-                if left_model and left_price:
+                if sku and price and product_name:
                     tags.append({
-                        "sku": left_model,
-                        "productName": left_name,
-                        "price": left_price,
-                        "barcode": ''.join(filter(str.isalnum, left_model)),
-                        "description": left_category
+                        "sku": sku,
+                        "productName": product_name,
+                        "price": price,
+                        "barcode": ''.join(filter(str.isalnum, sku)),
+                        "description": category
                     })
-                
-                # Create right product
-                if right_model and right_price:
-                    tags.append({
-                        "sku": right_model,
-                        "productName": right_name,
-                        "price": right_price,
-                        "barcode": ''.join(filter(str.isalnum, right_model)),
-                        "description": right_category
-                    })
-                
-                # Skip to next product pair
-                i += 3
-            
             i += 1
             
         except Exception as e:
@@ -144,16 +93,44 @@ def parse_pdf_content(text):
             i += 1
             continue
     
-    # Debug output
-    st.write(f"\nTotal tags found: {len(tags)}")
-    for tag in tags:
-        st.write(f"\nFound product:")
-        st.write(f"- Name: {tag['productName']}")
-        st.write(f"- SKU: {tag['sku']}")
-        st.write(f"- Price: ${tag['price']}")
-        st.write(f"- Category: {tag['description']}")
-    
     return tags
+
+def extract_text_from_pdf(pdf_path):
+    """Convert PDF to images and extract text from both halves"""
+    all_tags = []
+    
+    # Convert PDF to images with higher DPI for better OCR
+    images = convert_from_path(
+        pdf_path,
+        dpi=300,
+        fmt='png'
+    )
+    
+    for i, image in enumerate(images):
+        st.write(f"\nProcessing page {i+1}")
+        
+        # Split image and get text from both halves
+        left_text, right_text = split_image_and_extract_text(image)
+        
+        # Debug: Show extracted text
+        st.write("\nLeft half text:")
+        st.code(left_text)
+        st.write("\nRight half text:")
+        st.code(right_text)
+        
+        # Parse each half separately
+        left_tags = parse_half_page(left_text)
+        right_tags = parse_half_page(right_text)
+        
+        # Add all tags to the list
+        all_tags.extend(left_tags)
+        all_tags.extend(right_tags)
+    
+    return all_tags
+
+# File upload section
+st.header("Upload Source PDF")
+uploaded_file = st.file_uploader("Choose a PDF file", type=['pdf'])
 
 if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
@@ -161,25 +138,23 @@ if uploaded_file:
         tmp_file_path = tmp_file.name
     
     try:
-        # Extract text from PDF
-        extracted_text = extract_text_from_pdf(tmp_file_path)
-        st.session_state.uploaded_pdf_text = extracted_text
+        # Process the PDF and get tags
+        tags = extract_text_from_pdf(tmp_file_path)
         
-        # Parse the extracted text
-        parsed_tags = parse_pdf_content(extracted_text)
+        st.write(f"\nTotal tags found: {len(tags)}")
+        for tag in tags:
+            st.write(f"\nFound product:")
+            st.write(f"- Name: {tag['productName']}")
+            st.write(f"- SKU: {tag['sku']}")
+            st.write(f"- Price: ${tag['price']}")
+            st.write(f"- Category: {tag['description']}")
         
-        if parsed_tags:
-            st.success(f"Successfully extracted {len(parsed_tags)} tags from PDF!")
-            if st.button("Add extracted tags"):
-                st.session_state.tags.extend(parsed_tags)
-                st.rerun()
+        if tags:
+            st.session_state.tags = tags
+            st.success(f"Successfully extracted {len(tags)} tags!")
         else:
             st.warning("No tags found in the PDF. Check the format and try again.")
         
-        # Show extracted text in expander for debugging
-        with st.expander("Show extracted text"):
-            st.text(extracted_text)
-    
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
     finally:
