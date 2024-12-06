@@ -152,11 +152,11 @@ def extract_text_from_pdf(pdf_path):
 def validate_tag_text(text, max_width, font_name='Helvetica-Bold', font_size=12):
     """Calculate if text will fit within max_width"""
     from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
     
     # Get the width of the text
-    text_width = sum(pdfmetrics.stringWidth(char, font_name, font_size) for char in text)
-    return text_width <= max_width
+    text_width = pdfmetrics.stringWidth(text, font_name, font_size)
+    # Allow more generous threshold - about 45 characters for typical text
+    return text_width <= max_width * 1.2  # Added 20% tolerance
 
 def validate_tags(tags):
     """Check all tags for potential issues"""
@@ -172,10 +172,8 @@ def validate_tags(tags):
                 'type': 'text_overflow',
                 'field': 'productName',
                 'content': tag['productName'],
-                'message': 'Product name is too long for tag width'
+                'message': 'Product name may be too long for optimal display'
             })
-        
-        # Add more validations here as needed
         
         if tag_issues:
             exceptions[i] = {
@@ -190,52 +188,46 @@ def handle_tag_exceptions():
     if not st.session_state.tag_exceptions:
         return True
     
-    st.error(f" Found {len(st.session_state.tag_exceptions)} tags that need attention")
+    st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
     
-    with st.expander("", expanded=True):
-        st.write("Please review and fix the following tags:")
+    with st.expander("🔧 Review and Edit Long Product Names", expanded=True):
+        st.write("The following product names may be too long for optimal display. Edit if needed:")
         
         for idx, exception in st.session_state.tag_exceptions.items():
-            st.markdown("---")
             tag = exception['tag']
             
-            st.write(f"**Original Product Name:** {tag['productName']}")
-            st.write(f"SKU: {tag['sku']} | Price: ${tag['price']}")
-            
-            for issue in exception['issues']:
-                if issue['type'] == 'text_overflow':
-                    st.warning(issue['message'])
-                    
-                    # Let user edit the text with line breaks
-                    new_text = st.text_input(
-                        "Edit product name (use | for line breaks):",
-                        value=tag['productName'],
-                        key=f"fix_{idx}"
-                    )
-                    
-                    if st.button(f"Preview Tag {idx + 1}"):
-                        # Show preview of how the tag will look
-                        preview_tag = tag.copy()
-                        preview_tag['productName'] = new_text.replace('|', '\n')
-                        st.write("Preview:")
-                        st.code(preview_tag['productName'])
-                    
-                    if st.button(f"Accept Changes {idx + 1}"):
+            st.markdown("---")
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.write(f"**SKU:** {tag['sku']}")
+                new_text = st.text_input(
+                    "Edit product name if needed:",
+                    value=tag['productName'],
+                    key=f"fix_{idx}"
+                )
+            with cols[1]:
+                st.write(f"**Price:** ${tag['price']}")
+                if st.button(f"Save Changes", key=f"save_{idx}"):
+                    if new_text != tag['productName']:
                         st.session_state.resolved_tags[idx] = {
                             **tag,
-                            'productName': new_text.replace('|', '\n')
+                            'productName': new_text
                         }
-                        st.success("Changes saved!")
+                        st.success("Updated!")
         
-        if len(st.session_state.resolved_tags) == len(st.session_state.tag_exceptions):
-            if st.button("Apply All Changes"):
+        st.markdown("---")
+        if st.session_state.resolved_tags:
+            if st.button("Continue with Changes", type="primary"):
                 # Update the original tags with resolved ones
                 for idx, resolved_tag in st.session_state.resolved_tags.items():
                     st.session_state.tags[idx] = resolved_tag
                 st.session_state.tag_exceptions = {}
                 st.session_state.resolved_tags = {}
-                st.success("All tags updated successfully!")
                 return True
+        
+        if st.button("Continue without Changes", type="secondary"):
+            st.session_state.tag_exceptions = {}
+            return True
     
     return False
 
