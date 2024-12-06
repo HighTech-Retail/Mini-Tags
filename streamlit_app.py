@@ -234,39 +234,61 @@ if st.session_state.tags:
 
 def generate_pdf():
     buffer = io.BytesIO()
-    size = [float(x) for x in tag_size.split('x')]
-    width, height = size[0]*inch, size[1]*inch
+    # Use letter size paper
+    page_width = 8.5 * inch
+    page_height = 11 * inch
+    tag_width = 4 * inch
+    tag_height = 1.5 * inch
     
-    c = canvas.Canvas(buffer, pagesize=(width, height))
+    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
     
-    for tag in st.session_state.tags:
-        # Draw blue bar at bottom
-        c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
-        c.rect(0, 0, width, 0.2*inch, fill=1)
-        c.setFillColorRGB(0, 0, 0)  # Back to black
+    # Calculate starting positions
+    left_margin = (page_width - tag_width) / 2
+    top_margin = page_height - inch
+    
+    # Process tags in groups of 6
+    for i in range(0, len(st.session_state.tags), 6):
+        group = st.session_state.tags[i:i+6]
+        y_position = top_margin
         
-        # Draw product name in bold, centered
-        c.setFont(font_name+'-Bold', font_size+2)
-        product_name = tag['productName'].upper()
-        text_width = c.stringWidth(product_name, font_name+'-Bold', font_size+2)
-        x = (width - text_width) / 2
-        c.drawString(x, (height - margin - 0.2)*inch, product_name)
+        for tag in group:
+            # Draw tag border (optional)
+            # c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
+            
+            # Draw blue bar at bottom of tag
+            c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
+            c.rect(left_margin, y_position - tag_height + 0.1*inch, 
+                  tag_width, 0.2*inch, fill=1)
+            c.setFillColorRGB(0, 0, 0)  # Back to black
+            
+            # Draw product name in bold, centered
+            c.setFont('Helvetica-Bold', 12)
+            product_name = tag['productName'].upper()
+            text_width = c.stringWidth(product_name, 'Helvetica-Bold', 12)
+            x = left_margin + (tag_width - text_width) / 2
+            c.drawString(x, y_position - 0.3*inch, product_name)
+            
+            # Draw model number in italics, centered
+            c.setFont('Helvetica-Oblique', 10)
+            model_text = f"Model: {tag['sku']}"
+            text_width = c.stringWidth(model_text, 'Helvetica-Oblique', 10)
+            x = left_margin + (tag_width - text_width) / 2
+            c.drawString(x, y_position - 0.6*inch, model_text)
+            
+            # Draw price (large and bold), centered
+            c.setFont('Helvetica-Bold', 14)
+            price_text = f"Price: ${tag['price']}"
+            text_width = c.stringWidth(price_text, 'Helvetica-Bold', 14)
+            x = left_margin + (tag_width - text_width) / 2
+            c.drawString(x, y_position - 0.9*inch, price_text)
+            
+            # Move to next tag position
+            y_position -= tag_height + 0.2*inch  # 0.2 inch gap between tags
         
-        # Draw model number in italics, centered
-        c.setFont(font_name+'-Oblique', font_size-2)
-        model_text = f"Model: {tag['sku']}"
-        text_width = c.stringWidth(model_text, font_name+'-Oblique', font_size-2)
-        x = (width - text_width) / 2
-        c.drawString(x, (height - margin - 0.5)*inch, model_text)
-        
-        # Draw price (large and bold), centered
-        c.setFont(font_name+'-Bold', price_size+4)
-        price_text = f"Price: ${tag['price']}"
-        text_width = c.stringWidth(price_text, font_name+'-Bold', price_size+4)
-        x = (width - text_width) / 2
-        c.drawString(x, (height - margin - 0.9)*inch, price_text)
-        
-        c.showPage()
+        # Start new page if we have more tags
+        if i + 6 < len(st.session_state.tags):
+            c.showPage()
+            c.setFont('Helvetica', 12)  # Reset font for new page
     
     c.save()
     buffer.seek(0)
