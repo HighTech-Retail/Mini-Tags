@@ -79,6 +79,27 @@ def clean_text(text):
             cleaned_lines.append(line)
     return '\n'.join(cleaned_lines)
 
+def split_dual_line(line):
+    """Split a line that contains two products side by side"""
+    if 'Model #:' in line:
+        parts = line.split('Model #:')
+        return ['Model #:' + p for p in parts if p.strip()]
+    elif 'Regular Price:' in line:
+        parts = line.split('Regular Price:')
+        return ['Regular Price:' + p for p in parts if p.strip()]
+    elif 'Hearth >' in line:
+        parts = line.split('Hearth >')
+        return ['Hearth >' + p for p in parts if p.strip()]
+    else:
+        # For product description lines, split at reasonable points
+        if len(line) > 40:  # Long enough to potentially contain two products
+            mid = len(line) // 2
+            # Try to find a good split point near the middle
+            split_point = line.find('  ', mid - 10, mid + 10)
+            if split_point != -1:
+                return [line[:split_point].strip(), line[split_point:].strip()]
+        return [line]
+
 def parse_pdf_content(text):
     # Clean the text first
     cleaned_text = clean_text(text)
@@ -88,55 +109,51 @@ def parse_pdf_content(text):
     st.code(cleaned_text)
     
     tags = []
+    current_product = {}
+    lines = cleaned_text.split('\n')
     
-    # Split text into product blocks
-    blocks = cleaned_text.split('Hearth >')
-    blocks = [b for b in blocks if b.strip()]  # Remove empty blocks
-    
-    for block in blocks:
-        try:
-            # Extract model number
-            model_match = re.search(r'Model #: ([^\n]+)', block)
-            if not model_match:
-                continue
-            sku = model_match.group(1).strip()
-            
-            # Extract price
-            price_match = re.search(r'Regular Price: \$([0-9.]+)', block)
-            if not price_match:
-                continue
-            price = price_match.group(1).strip()
-            
-            # Extract product name (everything between model and price)
-            lines = block.split('\n')
-            model_idx = next(i for i, line in enumerate(lines) if 'Model #:' in line)
-            price_idx = next(i for i, line in enumerate(lines) if 'Regular Price:' in line)
-            
-            # Get product name from lines between model and price
-            product_name = ' '.join(line.strip() for line in lines[model_idx+1:price_idx] if line.strip())
-            
-            # Generate barcode from model number
-            barcode = ''.join(filter(str.isalnum, sku))
-            
-            # Get category
-            category = block.split('\n')[0].strip()
-            
-            # Debug: Show what we found
-            st.write(f"Found product: {product_name} (SKU: {sku}, Price: ${price})")
-            
-            tags.append({
-                "productName": product_name,
-                "price": price,
-                "sku": sku,
-                "barcode": barcode,
-                "description": f"Category: {category}"
-            })
-            
-        except Exception as e:
-            st.write(f"Error processing block: {str(e)}")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
             continue
+            
+        # Split line if it contains two products
+        split_lines = split_dual_line(line)
+        
+        for split_line in split_lines:
+            if 'Hearth >' in split_line:
+                if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
+                    tags.append(current_product)
+                current_product = {'category': split_line.strip()}
+            
+            elif 'Model #:' in split_line:
+                if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
+                    tags.append(current_product)
+                current_product = {'category': current_product.get('category', 'Hearth')}
+                current_product['sku'] = split_line.replace('Model #:', '').strip()
+                current_product['barcode'] = ''.join(filter(str.isalnum, current_product['sku']))
+            
+            elif 'Regular Price:' in split_line:
+                price_str = split_line.replace('Regular Price:', '').replace('$', '').strip()
+                if price_str:
+                    current_product['price'] = price_str
+            
+            elif split_line and current_product and 'sku' in current_product and 'productName' not in current_product:
+                current_product['productName'] = split_line.strip()
+        
+        i += 1
     
+    # Add the last product if complete
+    if current_product and all(k in current_product for k in ['sku', 'price', 'productName']):
+        tags.append(current_product)
+    
+    # Debug output
     st.write(f"Total tags found: {len(tags)}")
+    for tag in tags:
+        st.write(f"Found product: {tag['productName']} (SKU: {tag['sku']}, Price: ${tag['price']})")
+    
     return tags
 
 if uploaded_file:
