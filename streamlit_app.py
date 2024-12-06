@@ -21,6 +21,10 @@ if 'tags' not in st.session_state:
     st.session_state.tags = []
 if 'uploaded_pdf_text' not in st.session_state:
     st.session_state.uploaded_pdf_text = None
+if 'tag_exceptions' not in st.session_state:
+    st.session_state.tag_exceptions = {}
+if 'resolved_tags' not in st.session_state:
+    st.session_state.resolved_tags = {}
 
 def split_image_into_quarters(image):
     """Split the image into four equal quarters"""
@@ -145,6 +149,96 @@ def extract_text_from_pdf(pdf_path):
     
     return all_tags
 
+def validate_tag_text(text, max_width, font_name='Helvetica-Bold', font_size=12):
+    """Calculate if text will fit within max_width"""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    
+    # Get the width of the text
+    text_width = sum(pdfmetrics.stringWidth(char, font_name, font_size) for char in text)
+    return text_width <= max_width
+
+def validate_tags(tags):
+    """Check all tags for potential issues"""
+    exceptions = {}
+    max_width = 3.6 * inch  # 4 inch tag width minus margins
+    
+    for i, tag in enumerate(tags):
+        tag_issues = []
+        
+        # Check product name length
+        if not validate_tag_text(tag['productName'].upper(), max_width):
+            tag_issues.append({
+                'type': 'text_overflow',
+                'field': 'productName',
+                'content': tag['productName'],
+                'message': 'Product name is too long for tag width'
+            })
+        
+        # Add more validations here as needed
+        
+        if tag_issues:
+            exceptions[i] = {
+                'tag': tag,
+                'issues': tag_issues
+            }
+    
+    return exceptions
+
+def handle_tag_exceptions():
+    """UI for handling tag exceptions"""
+    if not st.session_state.tag_exceptions:
+        return True
+    
+    st.error(f" Found {len(st.session_state.tag_exceptions)} tags that need attention")
+    
+    with st.expander("", expanded=True):
+        st.write("Please review and fix the following tags:")
+        
+        for idx, exception in st.session_state.tag_exceptions.items():
+            st.markdown("---")
+            tag = exception['tag']
+            
+            st.write(f"**Original Product Name:** {tag['productName']}")
+            st.write(f"SKU: {tag['sku']} | Price: ${tag['price']}")
+            
+            for issue in exception['issues']:
+                if issue['type'] == 'text_overflow':
+                    st.warning(issue['message'])
+                    
+                    # Let user edit the text with line breaks
+                    new_text = st.text_input(
+                        "Edit product name (use | for line breaks):",
+                        value=tag['productName'],
+                        key=f"fix_{idx}"
+                    )
+                    
+                    if st.button(f"Preview Tag {idx + 1}"):
+                        # Show preview of how the tag will look
+                        preview_tag = tag.copy()
+                        preview_tag['productName'] = new_text.replace('|', '\n')
+                        st.write("Preview:")
+                        st.code(preview_tag['productName'])
+                    
+                    if st.button(f"Accept Changes {idx + 1}"):
+                        st.session_state.resolved_tags[idx] = {
+                            **tag,
+                            'productName': new_text.replace('|', '\n')
+                        }
+                        st.success("Changes saved!")
+        
+        if len(st.session_state.resolved_tags) == len(st.session_state.tag_exceptions):
+            if st.button("Apply All Changes"):
+                # Update the original tags with resolved ones
+                for idx, resolved_tag in st.session_state.resolved_tags.items():
+                    st.session_state.tags[idx] = resolved_tag
+                st.session_state.tag_exceptions = {}
+                st.session_state.resolved_tags = {}
+                st.success("All tags updated successfully!")
+                return True
+    
+    return False
+
 # File upload section
 st.header("Upload Source PDF")
 uploaded_file = st.file_uploader("Choose a PDF file", type=['pdf'])
@@ -156,12 +250,19 @@ if uploaded_file:
     
     try:
         # Process the PDF and get tags
-        with st.expander("🔍 Processing Details", expanded=False):
+        with st.expander("", expanded=False):
             st.write("Processing PDF pages...")
             tags = extract_text_from_pdf(tmp_file_path)
             st.write(f"\nTotal tags found: {len(tags)}")
         
-        with st.expander("📋 Found Products", expanded=False):
+        # Validate tags
+        st.session_state.tag_exceptions = validate_tags(tags)
+        
+        # Handle exceptions
+        if not handle_tag_exceptions():
+            st.stop()
+        
+        with st.expander("", expanded=False):
             for tag in tags:
                 st.write("---")
                 st.write(f"**Product:** {tag['productName']}")
@@ -175,12 +276,12 @@ if uploaded_file:
         
         if tags:
             st.session_state.tags = tags
-            st.success(f"✅ Successfully extracted {len(tags)} tags!")
+            st.success(f" Successfully extracted {len(tags)} tags!")
         else:
-            st.warning("⚠️ No tags found in the PDF. Check the format and try again.")
+            st.warning(" No tags found in the PDF. Check the format and try again.")
         
     except Exception as e:
-        st.error(f"❌ Error processing PDF: {str(e)}")
+        st.error(f" Error processing PDF: {str(e)}")
     finally:
         # Cleanup
         os.unlink(tmp_file_path)
@@ -252,31 +353,6 @@ def generate_pdf():
     left_margin = (page_width - tag_width) / 2
     top_margin = page_height - inch
     
-    def wrap_text(text, font_name, font_size, max_width):
-        """Wrap text to fit within max_width"""
-        words = text.split()
-        lines = []
-        current_line = []
-        current_width = 0
-        
-        c.setFont(font_name, font_size)
-        space_width = c.stringWidth(" ", font_name, font_size)
-        
-        for word in words:
-            word_width = c.stringWidth(word, font_name, font_size)
-            if current_width + word_width <= max_width:
-                current_line.append(word)
-                current_width += word_width + space_width
-            else:
-                if current_line:
-                    lines.append(" ".join(current_line))
-                current_line = [word]
-                current_width = word_width + space_width
-        
-        if current_line:
-            lines.append(" ".join(current_line))
-        return lines
-    
     # Process tags in groups of 6
     for i in range(0, len(st.session_state.tags), 6):
         group = st.session_state.tags[i:i+6]
@@ -293,26 +369,18 @@ def generate_pdf():
             c.setLineWidth(1)
             c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
             
-            # Draw product name in bold, centered, possibly wrapped
-            product_name = tag['productName'].upper()
-            font_size = 12
-            max_width = tag_width - 0.4*inch  # Leave some margin
+            # Handle multi-line product names
+            c.setFont('Helvetica-Bold', 12)
+            lines = tag['productName'].upper().split('\n')
             
-            # Reduce font size if needed for very long names
-            while c.stringWidth(product_name, 'Helvetica-Bold', font_size) > max_width * 1.8 and font_size > 8:
-                font_size -= 1
-                
-            c.setFont('Helvetica-Bold', font_size)
-            lines = wrap_text(product_name, 'Helvetica-Bold', font_size, max_width)
-            
-            # Calculate total height of wrapped text
-            line_height = font_size * 1.2 / 72  # Convert points to inches
+            # Calculate total height needed for text
+            line_height = 14 / 72  # 14pt in inches
             total_height = line_height * len(lines)
             start_y = y_position - 0.25*inch
             
             # Draw each line centered
             for line in lines:
-                text_width = c.stringWidth(line, 'Helvetica-Bold', font_size)
+                text_width = c.stringWidth(line, 'Helvetica-Bold', 12)
                 x = left_margin + (tag_width - text_width) / 2
                 c.drawString(x, start_y, line)
                 start_y -= line_height * inch
