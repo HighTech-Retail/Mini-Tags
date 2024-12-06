@@ -13,7 +13,7 @@ import re
 
 st.set_page_config(page_title="Price Tag Generator", layout="wide")
 
-st.title("Price Tag Generator 🏷️")
+st.title("Price Tag Generator ")
 
 # Initialize session state
 if 'tags' not in st.session_state:
@@ -64,20 +64,33 @@ def extract_text_from_pdf(pdf_path):
         return None
 
 def parse_pdf_content(text):
-    # Add your parsing logic here based on the PDF structure
-    # This is a placeholder - adjust based on your PDF format
-    tags = []
-    # Example pattern - adjust based on your PDF structure
-    pattern = r"Product: (.*?)\nPrice: \$(.*?)\nSKU: (.*?)\nBarcode: (\d+)"
-    matches = re.finditer(pattern, text, re.MULTILINE)
+    # Debug: Show the text we're trying to parse
+    st.write("Attempting to parse the following text:")
+    st.code(text)
     
-    for match in matches:
+    tags = []
+    
+    # New pattern matching your PDF format
+    pattern = r"Model #: ([^\n]+)\n([^\n]+?)\nRegular Price: \$([0-9.]+)"
+    st.write("Current regex pattern:", pattern)
+    
+    matches = re.finditer(pattern, text, re.MULTILINE | re.DOTALL)
+    matches_list = list(matches)
+    st.write(f"Number of matches found: {len(matches_list)}")
+    
+    for match in matches_list:
+        # Debug: Show what we matched
+        st.write("Found match:", match.groups())
+        
+        # Generate a barcode from the model number
+        barcode = ''.join(filter(str.isalnum, match.group(1)))  # Strip non-alphanumeric chars
+        
         tags.append({
-            "productName": match.group(1).strip(),
-            "price": match.group(2).strip(),
-            "sku": match.group(3).strip(),
-            "barcode": match.group(4).strip(),
-            "description": ""
+            "productName": match.group(2).strip(),
+            "price": match.group(3).strip(),
+            "sku": match.group(1).strip(),
+            "barcode": barcode,
+            "description": f"Category: {text.split('>')[1].split('\n')[0].strip() if '>' in text else 'Hearth'}"
         })
     return tags
 
