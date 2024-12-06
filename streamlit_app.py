@@ -241,7 +241,6 @@ if st.session_state.tags:
 
 def generate_pdf():
     buffer = io.BytesIO()
-    # Use letter size paper
     page_width = 8.5 * inch
     page_height = 11 * inch
     tag_width = 4 * inch
@@ -252,6 +251,31 @@ def generate_pdf():
     # Calculate starting positions
     left_margin = (page_width - tag_width) / 2
     top_margin = page_height - inch
+    
+    def wrap_text(text, font_name, font_size, max_width):
+        """Wrap text to fit within max_width"""
+        words = text.split()
+        lines = []
+        current_line = []
+        current_width = 0
+        
+        c.setFont(font_name, font_size)
+        space_width = c.stringWidth(" ", font_name, font_size)
+        
+        for word in words:
+            word_width = c.stringWidth(word, font_name, font_size)
+            if current_width + word_width <= max_width:
+                current_line.append(word)
+                current_width += word_width + space_width
+            else:
+                if current_line:
+                    lines.append(" ".join(current_line))
+                current_line = [word]
+                current_width = word_width + space_width
+        
+        if current_line:
+            lines.append(" ".join(current_line))
+        return lines
     
     # Process tags in groups of 6
     for i in range(0, len(st.session_state.tags), 6):
@@ -266,37 +290,54 @@ def generate_pdf():
             c.setFillColorRGB(0, 0, 0)  # Back to black
             
             # Draw tag border
-            c.setLineWidth(1)  # 1 point line width
+            c.setLineWidth(1)
             c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
             
-            # Draw product name in bold, centered
-            c.setFont('Helvetica-Bold', 12)
+            # Draw product name in bold, centered, possibly wrapped
             product_name = tag['productName'].upper()
-            text_width = c.stringWidth(product_name, 'Helvetica-Bold', 12)
-            x = left_margin + (tag_width - text_width) / 2
-            c.drawString(x, y_position - 0.3*inch, product_name)
+            font_size = 12
+            max_width = tag_width - 0.4*inch  # Leave some margin
+            
+            # Reduce font size if needed for very long names
+            while c.stringWidth(product_name, 'Helvetica-Bold', font_size) > max_width * 1.8 and font_size > 8:
+                font_size -= 1
+                
+            c.setFont('Helvetica-Bold', font_size)
+            lines = wrap_text(product_name, 'Helvetica-Bold', font_size, max_width)
+            
+            # Calculate total height of wrapped text
+            line_height = font_size * 1.2 / 72  # Convert points to inches
+            total_height = line_height * len(lines)
+            start_y = y_position - 0.25*inch
+            
+            # Draw each line centered
+            for line in lines:
+                text_width = c.stringWidth(line, 'Helvetica-Bold', font_size)
+                x = left_margin + (tag_width - text_width) / 2
+                c.drawString(x, start_y, line)
+                start_y -= line_height * inch
             
             # Draw model number in italics, centered
             c.setFont('Helvetica-Oblique', 10)
             model_text = f"Model: {tag['sku']}"
             text_width = c.stringWidth(model_text, 'Helvetica-Oblique', 10)
             x = left_margin + (tag_width - text_width) / 2
-            c.drawString(x, y_position - 0.6*inch, model_text)
+            c.drawString(x, y_position - 0.8*inch, model_text)
             
             # Draw price (large and bold), centered
             c.setFont('Helvetica-Bold', 14)
             price_text = f"Price: ${tag['price']}"
             text_width = c.stringWidth(price_text, 'Helvetica-Bold', 14)
             x = left_margin + (tag_width - text_width) / 2
-            c.drawString(x, y_position - 0.9*inch, price_text)
+            c.drawString(x, y_position - 1.1*inch, price_text)
             
             # Move to next tag position
-            y_position -= tag_height + 0.2*inch  # 0.2 inch gap between tags
+            y_position -= tag_height + 0.2*inch
         
         # Start new page if we have more tags
         if i + 6 < len(st.session_state.tags):
             c.showPage()
-            c.setFont('Helvetica', 12)  # Reset font for new page
+            c.setFont('Helvetica', 12)
     
     c.save()
     buffer.seek(0)
