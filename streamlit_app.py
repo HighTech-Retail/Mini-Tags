@@ -235,33 +235,36 @@ if st.session_state.tags:
 def generate_pdf():
     buffer = io.BytesIO()
     size = [float(x) for x in tag_size.split('x')]
+    width, height = size[0]*inch, size[1]*inch
     
-    c = canvas.Canvas(buffer, pagesize=(size[0]*inch, size[1]*inch))
+    c = canvas.Canvas(buffer, pagesize=(width, height))
     
     for tag in st.session_state.tags:
-        # Set font for product name
-        c.setFont(font_name, font_size)
+        # Draw blue bar at bottom
+        c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
+        c.rect(0, 0, width, 0.2*inch, fill=1)
+        c.setFillColorRGB(0, 0, 0)  # Back to black
         
-        # Draw product name
-        c.drawString(margin*inch, 
-                    (size[1] - margin)*inch, 
-                    tag['productName'])
+        # Draw product name in bold, centered
+        c.setFont(font_name+'-Bold', font_size+2)
+        product_name = tag['productName'].upper()
+        text_width = c.stringWidth(product_name, font_name+'-Bold', font_size+2)
+        x = (width - text_width) / 2
+        c.drawString(x, (height - margin - 0.2)*inch, product_name)
         
-        # Draw price (larger font)
-        c.setFont(font_name, price_size)
-        c.drawString(margin*inch,
-                    (size[1] - 0.5)*inch,
-                    f"${tag['price']}")
+        # Draw model number in italics, centered
+        c.setFont(font_name+'-Oblique', font_size-2)
+        model_text = f"Model: {tag['sku']}"
+        text_width = c.stringWidth(model_text, font_name+'-Oblique', font_size-2)
+        x = (width - text_width) / 2
+        c.drawString(x, (height - margin - 0.5)*inch, model_text)
         
-        # Draw SKU
-        c.setFont(font_name, font_size)
-        c.drawString(margin*inch,
-                    0.4*inch,
-                    f"SKU: {tag['sku']}")
-        
-        # Generate and draw barcode
-        barcode = code128.Code128(tag['barcode'])
-        barcode.drawOn(c, margin*inch, 0.1*inch)
+        # Draw price (large and bold), centered
+        c.setFont(font_name+'-Bold', price_size+4)
+        price_text = f"Price: ${tag['price']}"
+        text_width = c.stringWidth(price_text, font_name+'-Bold', price_size+4)
+        x = (width - text_width) / 2
+        c.drawString(x, (height - margin - 0.9)*inch, price_text)
         
         c.showPage()
     
