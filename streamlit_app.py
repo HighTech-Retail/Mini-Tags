@@ -11,9 +11,9 @@ from pdf2image import convert_from_path
 import pytesseract
 import re
 from PIL import Image
+import numpy as np
 
 st.set_page_config(page_title="Price Tag Generator", layout="wide")
-
 st.title("Price Tag Generator ")
 
 # Initialize session state
@@ -22,81 +22,106 @@ if 'tags' not in st.session_state:
 if 'uploaded_pdf_text' not in st.session_state:
     st.session_state.uploaded_pdf_text = None
 
-def split_image_and_extract_text(image):
-    """Split the image down the middle and extract text from both halves"""
+def split_image_into_quarters(image):
+    """Split the image into four equal quarters"""
     width, height = image.size
-    mid_point = width // 2
+    mid_w = width // 2
+    mid_h = height // 2
     
-    # Split into left and right halves
-    left_half = image.crop((0, 0, mid_point, height))
-    right_half = image.crop((mid_point, 0, width, height))
+    # Split into quarters
+    quarters = [
+        # Top left
+        image.crop((0, 0, mid_w, mid_h)),
+        # Top right
+        image.crop((mid_w, 0, width, mid_h)),
+        # Bottom left
+        image.crop((0, mid_h, mid_w, height)),
+        # Bottom right
+        image.crop((mid_w, mid_h, width, height))
+    ]
     
-    # Extract text from each half
-    custom_config = r'--oem 3 --psm 6'
-    left_text = pytesseract.image_to_string(left_half, config=custom_config)
-    right_text = pytesseract.image_to_string(right_half, config=custom_config)
-    
-    # Debug: Show the split images
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("Left Half:")
-        st.image(left_half)
-    with col2:
-        st.write("Right Half:")
-        st.image(right_half)
-    
-    return left_text, right_text
+    return quarters
 
-def parse_half_page(text):
-    """Parse text from one half of the page"""
-    tags = []
-    lines = text.split('\n')
-    i = 0
+def process_quarter(image, quarter_num):
+    """Process a single quarter of the page"""
+    # Convert to RGB if needed
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
     
-    while i < len(lines):
-        try:
-            line = lines[i].strip()
-            
+    # Extract text with custom configuration
+    custom_config = r'--oem 3 --psm 6'
+    text = pytesseract.image_to_string(image, config=custom_config)
+    
+    # Debug: Show the quarter and its text
+    st.write(f"\nQuarter {quarter_num + 1}:")
+    st.image(image, width=300)
+    st.code(text)
+    
+    # Parse the text for this quarter
+    tag = parse_single_tag(text)
+    return tag
+
+def parse_single_tag(text):
+    """Parse text from a single tag"""
+    try:
+        lines = text.split('\n')
+        tag = {}
+        
+        # Find category (Hearth > XXX)
+        for line in lines:
+            if 'Hearth >' in line:
+                tag['description'] = line.strip()
+                break
+        
+        # Find Model number
+        for line in lines:
             if 'Model #:' in line:
-                # Get category from previous lines
-                category = "Hearth"
-                for j in range(i-1, max(0, i-3), -1):
-                    if 'Hearth >' in lines[j]:
-                        category = lines[j].strip()
-                        break
-                
-                # Get model number
                 sku = line.replace('Model #:', '').strip()
-                
-                # Get product name from next line
-                product_name = lines[i+1].strip() if i+1 < len(lines) else ""
-                
-                # Get price from next lines
-                price = ""
-                for j in range(i+1, min(len(lines), i+4)):
-                    if 'Regular Price: $' in lines[j]:
-                        price = lines[j].replace('Regular Price: $', '').strip()
-                        break
-                
-                if sku and price and product_name:
-                    tags.append({
-                        "sku": sku,
-                        "productName": product_name,
-                        "price": price,
-                        "barcode": ''.join(filter(str.isalnum, sku)),
-                        "description": category
-                    })
-            i += 1
+                tag['sku'] = sku
+                tag['barcode'] = ''.join(filter(str.isalnum, sku))
+                break
+        
+        # Find price
+        for line in lines:
+            if 'Regular Price: $' in line:
+                price = line.replace('Regular Price: $', '').strip()
+                tag['price'] = price
+                break
+        
+        # Find product name (usually between Model # and Regular Price)
+        try:
+            model_idx = next(i for i, line in enumerate(lines) if 'Model #:' in line)
+            price_idx = next(i for i, line in enumerate(lines) if 'Regular Price:' in line)
             
-        except Exception as e:
-            st.write(f"Error processing line {i}: {str(e)}")
-            i += 1
-            continue
-    
-    return tags
+            # Get all lines between model and price
+            name_lines = [line.strip() for line in lines[model_idx+1:price_idx] if line.strip()]
+            if name_lines:
+                tag['productName'] = ' '.join(name_lines)
+        except:
+            # Fallback: look for any substantial line that's not category/model/price
+            for line in lines:
+                if (len(line.strip()) > 10 and 
+                    'Hearth >' not in line and 
+                    'Model #:' not in line and 
+                    'Regular Price:' not in line):
+                    tag['productName'] = line.strip()
+                    break
+        
+        # Validate tag has all required fields
+        required_fields = ['sku', 'productName', 'price', 'barcode']
+        if all(field in tag for field in required_fields):
+            return tag
+        else:
+            missing = [field for field in required_fields if field not in tag]
+            st.write(f"Missing fields in tag: {missing}")
+            return None
+            
+    except Exception as e:
+        st.write(f"Error parsing tag: {str(e)}")
+        return None
 
 def extract_text_from_pdf(pdf_path):
-    """Convert PDF to images and extract text from both halves"""
+    """Convert PDF to images and extract text from quarters"""
     all_tags = []
     
     # Convert PDF to images with higher DPI for better OCR
@@ -109,22 +134,14 @@ def extract_text_from_pdf(pdf_path):
     for i, image in enumerate(images):
         st.write(f"\nProcessing page {i+1}")
         
-        # Split image and get text from both halves
-        left_text, right_text = split_image_and_extract_text(image)
+        # Split image into quarters
+        quarters = split_image_into_quarters(image)
         
-        # Debug: Show extracted text
-        st.write("\nLeft half text:")
-        st.code(left_text)
-        st.write("\nRight half text:")
-        st.code(right_text)
-        
-        # Parse each half separately
-        left_tags = parse_half_page(left_text)
-        right_tags = parse_half_page(right_text)
-        
-        # Add all tags to the list
-        all_tags.extend(left_tags)
-        all_tags.extend(right_tags)
+        # Process each quarter
+        for j, quarter in enumerate(quarters):
+            tag = process_quarter(quarter, j)
+            if tag:
+                all_tags.append(tag)
     
     return all_tags
 
