@@ -156,7 +156,7 @@ def validate_tag_text(text, max_width, font_name='Helvetica-Bold', font_size=12)
     # Get the width of the text
     text_width = pdfmetrics.stringWidth(text, font_name, font_size)
     # Allow more generous threshold - about 45 characters for typical text
-    return text_width <= max_width * 1.2  # Added 20% tolerance
+    return text_width <= max_width * 1.5  # Increased tolerance to 50%
 
 def validate_tags(tags):
     """Check all tags for potential issues"""
@@ -167,12 +167,16 @@ def validate_tags(tags):
         tag_issues = []
         
         # Check product name length
-        if not validate_tag_text(tag['productName'].upper(), max_width):
+        text = tag['productName'].upper()
+        from reportlab.pdfbase import pdfmetrics
+        text_width = pdfmetrics.stringWidth(text, 'Helvetica-Bold', 12)
+        if text_width > max_width * 1.5:  # Using same tolerance as validate_tag_text
             tag_issues.append({
                 'type': 'text_overflow',
                 'field': 'productName',
-                'content': tag['productName'],
-                'message': 'Product name may be too long for optimal display'
+                'content': text,
+                'message': f'Product name is {int((text_width/max_width)*100)}% of available width',
+                'width_ratio': text_width/max_width
             })
         
         if tag_issues:
@@ -195,26 +199,48 @@ def handle_tag_exceptions():
         
         for idx, exception in st.session_state.tag_exceptions.items():
             tag = exception['tag']
+            issues = exception['issues']
             
             st.markdown("---")
             cols = st.columns([3, 1])
             with cols[0]:
                 st.write(f"**SKU:** {tag['sku']}")
+                
+                # Show length warning with color
+                for issue in issues:
+                    if issue['type'] == 'text_overflow':
+                        ratio = issue['width_ratio']
+                        color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
+                        st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
+                
                 new_text = st.text_input(
                     "Edit product name if needed:",
                     value=tag['productName'],
                     key=f"fix_{idx}"
                 )
+                
+                # Show live preview of text width
+                if new_text:
+                    from reportlab.pdfbase import pdfmetrics
+                    new_width = pdfmetrics.stringWidth(new_text.upper(), 'Helvetica-Bold', 12)
+                    ratio = new_width / (3.6 * inch)
+                    color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
+                    st.markdown(f"<p style='color: {color}'>Current width: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+            
             with cols[1]:
                 st.write(f"**Price:** ${tag['price']}")
                 if st.button(f"Save Changes", key=f"save_{idx}"):
                     if new_text != tag['productName']:
-                        st.session_state.resolved_tags[idx] = {
-                            **tag,
-                            'productName': new_text
-                        }
-                        st.success("Updated!")
-        
+                        # Validate the new text
+                        if validate_tag_text(new_text.upper(), 3.6 * inch):
+                            st.session_state.resolved_tags[idx] = {
+                                **tag,
+                                'productName': new_text
+                            }
+                            st.success("Updated! Text fits within limits.")
+                        else:
+                            st.error("Text is still too long! Try making it shorter.")
+                            
         st.markdown("---")
         if st.session_state.resolved_tags:
             if st.button("Continue with Changes", type="primary"):
