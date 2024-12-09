@@ -128,25 +128,48 @@ def extract_text_from_pdf(pdf_path):
     """Convert PDF to images and extract text from quarters"""
     all_tags = []
     
-    # Convert PDF to images with higher DPI for better OCR
-    images = convert_from_path(
-        pdf_path,
-        dpi=300,
-        fmt='png'
-    )
-    
-    for i, image in enumerate(images):
-        st.write(f"\nProcessing page {i+1}")
+    try:
+        # Convert PDF to images with higher DPI for better OCR
+        images = convert_from_path(
+            pdf_path,
+            dpi=300,
+            fmt='png'
+        )
         
-        # Split image into quarters
-        quarters = split_image_into_quarters(image)
+        if not images:
+            st.error("No pages found in PDF")
+            return []
         
-        # Process each quarter
-        for j, quarter in enumerate(quarters):
-            tag = process_quarter(quarter, j)
-            if tag:
-                all_tags.append(tag)
-    
+        for i, image in enumerate(images):
+            st.write(f"\nProcessing page {i+1}")
+            
+            try:
+                # Split image into quarters
+                quarters = split_image_into_quarters(image)
+                
+                # Process each quarter
+                for j, quarter in enumerate(quarters):
+                    try:
+                        tag = process_quarter(quarter, j)
+                        if tag and all(tag.get(field) for field in ['sku', 'productName', 'price', 'barcode']):
+                            all_tags.append(tag)
+                        else:
+                            st.warning(f"Skipping invalid tag in page {i+1}, quarter {j+1}")
+                    except Exception as e:
+                        st.warning(f"Error processing quarter {j+1} on page {i+1}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                st.warning(f"Error processing page {i+1}: {str(e)}")
+                continue
+                
+        if not all_tags:
+            st.warning("No valid tags found in the PDF. Check if the format matches the expected layout.")
+            
+    except Exception as e:
+        st.error(f"Error processing PDF: {str(e)}")
+        return []
+        
     return all_tags
 
 def validate_tag_text(text, max_width, font_name='Helvetica-Bold', font_size=12):
@@ -268,41 +291,38 @@ if uploaded_file:
     
     try:
         # Process the PDF and get tags
-        with st.expander("", expanded=False):
+        with st.expander("PDF Processing Details", expanded=True):
             st.write("Processing PDF pages...")
             tags = extract_text_from_pdf(tmp_file_path)
-            st.write(f"\nTotal tags found: {len(tags)}")
-        
-        # Validate tags
-        st.session_state.tag_exceptions = validate_tags(tags)
-        
-        # Handle exceptions
-        if not handle_tag_exceptions():
-            st.stop()
-        
-        with st.expander("", expanded=False):
-            for tag in tags:
-                st.write("---")
-                st.write(f"**Product:** {tag['productName']}")
-                cols = st.columns(2)
-                with cols[0]:
-                    st.write(f"SKU: {tag['sku']}")
-                with cols[1]:
-                    st.write(f"Price: ${tag['price']}")
-                if 'description' in tag:
-                    st.write(f"Category: {tag['description']}")
-        
-        if tags:
-            st.session_state.tags = tags
-            st.success(f" Successfully extracted {len(tags)} tags!")
-        else:
-            st.warning(" No tags found in the PDF. Check the format and try again.")
+            
+            if tags:
+                st.success(f"Found {len(tags)} valid tags!")
+                st.session_state.tags = tags
+                
+                # Validate tags
+                st.session_state.tag_exceptions = validate_tags(tags)
+                
+                # Handle exceptions
+                if not handle_tag_exceptions():
+                    st.stop()
+                    
+            else:
+                st.error("No valid tags found. Please check if the PDF format is correct.")
+                st.session_state.tags = []
+                st.session_state.tag_exceptions = {}
+                st.session_state.resolved_tags = {}
         
     except Exception as e:
-        st.error(f" Error processing PDF: {str(e)}")
+        st.error(f"Error processing PDF: {str(e)}")
+        st.session_state.tags = []
+        st.session_state.tag_exceptions = {}
+        st.session_state.resolved_tags = {}
     finally:
         # Cleanup
-        os.unlink(tmp_file_path)
+        try:
+            os.unlink(tmp_file_path)
+        except:
+            pass
 
 # Sidebar for settings
 with st.sidebar:
