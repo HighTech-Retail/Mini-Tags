@@ -78,54 +78,43 @@ def parse_single_tag(text):
                 break
         
         # Find Model number
-        for line in lines:
+        model_line_idx = None
+        for i, line in enumerate(lines):
             if 'Model #:' in line:
                 sku = line.replace('Model #:', '').strip()
                 tag['sku'] = sku
                 tag['barcode'] = ''.join(filter(str.isalnum, sku))
+                model_line_idx = i
                 break
         
         # Find price - look for both formats
-        for line in lines:
+        price_line_idx = None
+        for i, line in enumerate(lines):
             if 'Regular Price: $' in line:
                 price = line.replace('Regular Price: $', '').strip()
                 tag['price'] = price
+                price_line_idx = i
                 break
-            elif line.strip().startswith('$') and line.strip().replace('.', '').replace('$', '').isdigit():
-                # If it's just a dollar amount alone
+            elif line.strip().startswith('$') and any(c.isdigit() for c in line):
                 tag['price'] = line.strip().replace('$', '')
+                price_line_idx = i
                 break
         
-        # Find product name (between Model # and Regular Price/dollar amount)
-        try:
-            model_idx = next(i for i, line in enumerate(lines) if 'Model #:' in line)
-            
-            # Find the price line index
-            price_idx = None
-            for i, line in enumerate(lines[model_idx+1:], start=model_idx+1):
-                if ('Regular Price: $' in line or 
-                    (line.strip().startswith('$') and line.strip().replace('.', '').replace('$', '').isdigit())):
-                    price_idx = i
-                    break
-            
-            if price_idx:
-                # Get the line immediately after Model # if it's not a system line
-                product_line = lines[model_idx + 1].strip()
-                if not any(x in product_line.lower() for x in ['contracts available', 'fireplace distributors', 'hearth >']):
-                    tag['productName'] = product_line
-        except:
-            # Fallback: look for any substantial line that's not category/model/price
-            for line in lines:
+        # Find product name - combine all relevant lines between model and price
+        if model_line_idx is not None and price_line_idx is not None:
+            product_lines = []
+            for line in lines[model_line_idx + 1:price_line_idx]:
                 line = line.strip()
-                if (len(line) > 10 and 
-                    'Hearth >' not in line and 
-                    'Model #:' not in line and 
-                    'Regular Price:' not in line and
+                if (len(line) > 0 and 
+                    'Hearth >' not in line and
                     'Contracts Available' not in line and
                     'Fireplace Distributors' not in line and
                     not line.startswith('$')):
-                    tag['productName'] = line
-                    break
+                    product_lines.append(line)
+            
+            if product_lines:
+                # Join all product lines, replacing multiple spaces with single space
+                tag['productName'] = ' '.join(' '.join(product_lines).split())
         
         # Validate tag has all required fields
         required_fields = ['sku', 'productName', 'price', 'barcode']
@@ -239,75 +228,56 @@ def auto_split_text(text, max_width, c, initial_font_size=12):
     
     text = text.upper()
     
-    # Special handling for measurement-based descriptions
-    if any(x in text for x in ['X', '/']):
-        # For items with measurements, try to split after the measurements
-        parts = text.split(',', 1)  # Split at first comma if exists
-        if len(parts) > 1:
-            return [parts[0].strip(), parts[1].strip()], initial_font_size
-        
-        # If no comma, try to split after the measurements
-        if 'X' in text:
-            # Find the last X in the measurements
-            last_x_pos = text.rindex('X')
-            # Look for the end of the measurements (next space after numbers)
-            pos = last_x_pos
-            while pos < len(text) and (text[pos].isdigit() or text[pos] in '/X. '):
-                pos += 1
-            if pos < len(text):
-                return [text[:pos].strip(), text[pos:].strip()], initial_font_size
+    # Function to check if text fits
+    def text_fits(text, font_size, max_width_ratio=1.5):
+        return pdfmetrics.stringWidth(text, 'Helvetica-Bold', font_size) <= max_width * max_width_ratio
     
-    # If we get here, use the standard word-based splitting
-    words = text.split()
-    if not words:
-        return [], initial_font_size
+    # Try to find natural split points
+    split_candidates = [
+        # Split before "BAGGED" or "FLAT"
+        lambda t: t.find(", BAGGED"),
+        lambda t: t.find(", FLAT"),
+        # Split before parentheses
+        lambda t: t.find(" ("),
+        # Split after measurements (before descriptive text)
+        lambda t: next((i for i, c in enumerate(t) if c.isalpha() and 
+                       i > 0 and (t[i-1].isdigit() or t[i-1] in 'X/')), -1),
+        # Split at comma
+        lambda t: t.find(","),
+        # Split at last space in first half
+        lambda t: t.rfind(" ", 0, len(t)//2 + 10)
+    ]
     
-    # Try different font sizes if needed
+    # Try each split point with original font size
     font_size = initial_font_size
-    while font_size >= 9:  # Don't go smaller than 9pt
-        lines = []
-        current_line = []
-        
-        for word in words:
-            # Test adding this word to current line
-            test_line = ' '.join(current_line + [word])
-            width = pdfmetrics.stringWidth(test_line, 'Helvetica-Bold', font_size)
+    for get_split_point in split_candidates:
+        split_point = get_split_point(text)
+        if split_point > 0:
+            line1 = text[:split_point].strip()
+            line2 = text[split_point:].strip(" ,()")
             
-            if not current_line or width <= max_width * (1.5 if len(lines) == 0 else 1.2):
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
-                else:
-                    # Single word is too long, force it and try smaller font
-                    lines.append(word)
-        
-        # Add remaining words
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        # If we have 1-2 lines and they fit, we're done
-        if len(lines) <= 2:
-            all_fit = True
-            for i, line in enumerate(lines):
-                width = pdfmetrics.stringWidth(line, 'Helvetica-Bold', font_size)
-                max_allowed = max_width * (1.5 if i == 0 else 1.2)
-                if width > max_allowed:
-                    all_fit = False
-                    break
-            if all_fit:
-                return lines, font_size
-        
-        # If we get here, try a smaller font
+            if text_fits(line1, font_size, 1.5) and text_fits(line2, font_size, 1.2):
+                return [line1, line2], font_size
+    
+    # If no good split point found, try reducing font size
+    while font_size >= 9:
+        # Try splitting at the middle
+        mid_point = len(text) // 2
+        split_point = text.rfind(" ", 0, mid_point + 10)
+        if split_point > 0:
+            line1 = text[:split_point].strip()
+            line2 = text[split_point:].strip()
+            if text_fits(line1, font_size, 1.5) and text_fits(line2, font_size, 1.2):
+                return [line1, line2], font_size
         font_size -= 1
     
-    # If we get here, use smallest font and force split into two lines
-    font_size = 9
-    if len(lines) > 2:
-        # Combine excess lines into second line
-        lines = [lines[0], ' '.join(lines[1:])]
-    return lines, font_size
+    # Last resort: force split at midpoint with smallest font
+    mid_point = len(text) // 2
+    split_point = text.rfind(" ", 0, mid_point + 10)
+    if split_point > 0:
+        return [text[:split_point].strip(), text[split_point:].strip()], 9
+    
+    return [text], 9
 
 def generate_pdf():
     buffer = io.BytesIO()
