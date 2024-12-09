@@ -218,7 +218,9 @@ def handle_tag_exceptions():
     st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
     
     with st.expander("🔧 Review and Edit Long Product Names", expanded=True):
-        st.write("The following product names may be too long for optimal display. Edit if needed:")
+        st.write("The following product names may be too long for optimal display. You can:")
+        st.write("1. Edit the text to make it shorter")
+        st.write("2. Add a line break using '|' where you want to split the name (e.g. 'FIRST LINE|SECOND LINE')")
         
         for idx, exception in st.session_state.tag_exceptions.items():
             tag = exception['tag']
@@ -236,19 +238,33 @@ def handle_tag_exceptions():
                         color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
                         st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
                 
+                # Add helper text for line breaks
+                current_text = tag['productName']
+                if '|' in current_text:  # If already has a line break
+                    current_text = current_text.replace('|', '\n')
+                    st.write("Current preview:")
+                    st.code(current_text)
+                    
                 new_text = st.text_input(
-                    "Edit product name if needed:",
+                    "Edit product name (use | for line break):",
                     value=tag['productName'],
-                    key=f"fix_{idx}"
+                    key=f"fix_{idx}",
+                    help="Use | to split text into multiple lines. Example: FIRST LINE|SECOND LINE"
                 )
                 
-                # Show live preview of text width
+                # Show live preview of text width for each line
                 if new_text:
                     from reportlab.pdfbase import pdfmetrics
-                    new_width = pdfmetrics.stringWidth(new_text.upper(), 'Helvetica-Bold', 12)
-                    ratio = new_width / (3.6 * inch)
-                    color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
-                    st.markdown(f"<p style='color: {color}'>Current width: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+                    lines = new_text.split('|')
+                    st.write("Width preview for each line:")
+                    for i, line in enumerate(lines, 1):
+                        text_width = pdfmetrics.stringWidth(line.upper().strip(), 'Helvetica-Bold', 12)
+                        ratio = text_width / (3.6 * inch)
+                        color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
+                        st.markdown(f"<p style='color: {color}'>Line {i}: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+                        
+                        if i > 1 and ratio > 1.2:  # Stricter limit for second line
+                            st.warning("⚠️ Second line should be shorter to avoid overlapping with other content")
             
             with cols[1]:
                 st.write(f"**Price:** ${tag['price']}")
@@ -263,7 +279,7 @@ def handle_tag_exceptions():
                             st.success("Updated! Text fits within limits.")
                         else:
                             st.error("Text is still too long! Try making it shorter.")
-                            
+        
         st.markdown("---")
         if st.session_state.resolved_tags:
             if st.button("Continue with Changes", type="primary"):
@@ -318,7 +334,9 @@ if uploaded_file:
                 st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
                 
                 st.subheader("🔧 Review and Edit Long Product Names")
-                st.write("The following product names may be too long for optimal display. Edit if needed:")
+                st.write("The following product names may be too long for optimal display. You can:")
+                st.write("1. Edit the text to make it shorter")
+                st.write("2. Add a line break using '|' where you want to split the name (e.g. 'FIRST LINE|SECOND LINE')")
                 
                 for idx, exception in st.session_state.tag_exceptions.items():
                     tag = exception['tag']
@@ -336,19 +354,33 @@ if uploaded_file:
                                 color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
                                 st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
                         
+                        # Add helper text for line breaks
+                        current_text = tag['productName']
+                        if '|' in current_text:  # If already has a line break
+                            current_text = current_text.replace('|', '\n')
+                            st.write("Current preview:")
+                            st.code(current_text)
+                            
                         new_text = st.text_input(
-                            "Edit product name if needed:",
+                            "Edit product name (use | for line break):",
                             value=tag['productName'],
-                            key=f"fix_{idx}"
+                            key=f"fix_{idx}",
+                            help="Use | to split text into multiple lines. Example: FIRST LINE|SECOND LINE"
                         )
                         
-                        # Show live preview of text width
+                        # Show live preview of text width for each line
                         if new_text:
                             from reportlab.pdfbase import pdfmetrics
-                            new_width = pdfmetrics.stringWidth(new_text.upper(), 'Helvetica-Bold', 12)
-                            ratio = new_width / (3.6 * inch)
-                            color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
-                            st.markdown(f"<p style='color: {color}'>Current width: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+                            lines = new_text.split('|')
+                            st.write("Width preview for each line:")
+                            for i, line in enumerate(lines, 1):
+                                text_width = pdfmetrics.stringWidth(line.upper().strip(), 'Helvetica-Bold', 12)
+                                ratio = text_width / (3.6 * inch)
+                                color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
+                                st.markdown(f"<p style='color: {color}'>Line {i}: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+                                
+                                if i > 1 and ratio > 1.2:  # Stricter limit for second line
+                                    st.warning("⚠️ Second line should be shorter to avoid overlapping with other content")
                     
                     with cols[1]:
                         st.write(f"**Price:** ${tag['price']}")
@@ -496,7 +528,8 @@ def generate_pdf():
             
             # Handle multi-line product names
             c.setFont('Helvetica-Bold', 12)
-            lines = tag['productName'].upper().split('\n')
+            # Split by either manual line breaks (|) or automatic ones (\n)
+            lines = tag['productName'].replace('|', '\n').upper().split('\n')
             
             # Calculate total height needed for text
             line_height = 14 / 72  # 14pt in inches
@@ -504,11 +537,15 @@ def generate_pdf():
             start_y = y_position - 0.45*inch
             
             # Draw each line centered
-            for line in lines:
-                text_width = c.stringWidth(line, 'Helvetica-Bold', 12)
+            for i, line in enumerate(lines):
+                text_width = c.stringWidth(line.strip(), 'Helvetica-Bold', 12)
                 x = left_margin + (tag_width - text_width) / 2
-                c.drawString(x, start_y, line)
-                start_y -= line_height * inch
+                # Adjust spacing between lines based on number of lines
+                if len(lines) > 1:
+                    line_spacing = 0.15 * inch  # Slightly closer together for multiple lines
+                else:
+                    line_spacing = line_height * inch
+                c.drawString(x, start_y - (i * line_spacing), line.strip())
             
             # Draw model number in italics, centered
             c.setFont('Helvetica-Oblique', 10)
