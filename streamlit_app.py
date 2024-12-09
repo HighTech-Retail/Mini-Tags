@@ -25,6 +25,8 @@ if 'tag_exceptions' not in st.session_state:
     st.session_state.tag_exceptions = {}
 if 'resolved_tags' not in st.session_state:
     st.session_state.resolved_tags = {}
+if 'debug_log' not in st.session_state:
+    st.session_state.debug_log = []
 
 def split_image_into_quarters(image):
     """Split the image into four equal quarters"""
@@ -56,10 +58,8 @@ def process_quarter(image, quarter_num):
     custom_config = r'--oem 3 --psm 6'
     text = pytesseract.image_to_string(image, config=custom_config)
     
-    # Debug: Show the quarter and its text
-    st.write(f"\nQuarter {quarter_num + 1}:")
-    st.image(image, width=300)
-    st.code(text)
+    # Add to debug log instead of showing directly
+    add_to_debug_log(f"Quarter {quarter_num + 1} Text:\n{text}\n")
     
     # Parse the text for this quarter
     tag = parse_single_tag(text)
@@ -129,12 +129,34 @@ def parse_single_tag(text):
         st.write(f"Error parsing tag: {str(e)}")
         return None
 
+def add_to_debug_log(message):
+    """Add message to debug log"""
+    st.session_state.debug_log.append(message)
+
+def show_debug_log():
+    """Show debug information in expandable section"""
+    with st.expander("🔧 Troubleshooting Log"):
+        st.write("This section contains technical details useful for troubleshooting:")
+        
+        # Add download button for log
+        log_text = "\n".join(st.session_state.debug_log)
+        st.download_button(
+            label="Download Log",
+            data=log_text,
+            file_name="tagger_debug.log",
+            mime="text/plain"
+        )
+        
+        # Show log in scrollable area
+        st.code(log_text)
+
 def extract_text_from_pdf(pdf_path):
     """Convert PDF to images and extract text from quarters"""
     all_tags = []
     
     try:
         # Convert PDF to images with higher DPI for better OCR
+        add_to_debug_log(f"Processing PDF: {pdf_path}")
         images = convert_from_path(
             pdf_path,
             dpi=300,
@@ -142,11 +164,13 @@ def extract_text_from_pdf(pdf_path):
         )
         
         if not images:
-            st.error("No pages found in PDF")
+            error_msg = "No pages found in PDF"
+            add_to_debug_log(f"Error: {error_msg}")
+            st.error(error_msg)
             return []
         
         for i, image in enumerate(images):
-            st.write(f"\nProcessing page {i+1}")
+            add_to_debug_log(f"\nProcessing page {i+1}")
             
             try:
                 # Split image into quarters
@@ -158,21 +182,26 @@ def extract_text_from_pdf(pdf_path):
                         tag = process_quarter(quarter, j)
                         if tag and all(tag.get(field) for field in ['sku', 'productName', 'price', 'barcode']):
                             all_tags.append(tag)
+                            add_to_debug_log(f"Successfully extracted tag: {tag['sku']}")
                         else:
-                            st.warning(f"Skipping invalid tag in page {i+1}, quarter {j+1}")
+                            add_to_debug_log(f"Skipping invalid tag in page {i+1}, quarter {j+1}")
                     except Exception as e:
-                        st.warning(f"Error processing quarter {j+1} on page {i+1}: {str(e)}")
+                        add_to_debug_log(f"Error processing quarter {j+1} on page {i+1}: {str(e)}")
                         continue
                         
             except Exception as e:
-                st.warning(f"Error processing page {i+1}: {str(e)}")
+                add_to_debug_log(f"Error processing page {i+1}: {str(e)}")
                 continue
                 
         if not all_tags:
-            st.warning("No valid tags found in the PDF. Check if the format matches the expected layout.")
+            error_msg = "No valid tags found in the PDF. Check if the format matches the expected layout."
+            add_to_debug_log(f"Error: {error_msg}")
+            st.warning(error_msg)
             
     except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
+        error_msg = f"Error processing PDF: {str(e)}"
+        add_to_debug_log(f"Critical Error: {error_msg}")
+        st.error(error_msg)
         return []
         
     return all_tags
@@ -394,18 +423,18 @@ if uploaded_file:
                     file_name="price_tags.pdf",
                     mime="application/pdf"
                 )
+            
+            # Show debug log at the bottom
+            show_debug_log()
                 
         else:
             st.error("No valid tags found. Please check if the PDF format is correct.")
             st.session_state.tags = []
-            st.session_state.tag_exceptions = {}
-            st.session_state.resolved_tags = {}
-        
+            show_debug_log()  # Show debug log even if no tags found
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         st.session_state.tags = []
-        st.session_state.tag_exceptions = {}
-        st.session_state.resolved_tags = {}
+        show_debug_log()  # Show debug log even if no tags found
     finally:
         # Cleanup
         try:
@@ -466,16 +495,3 @@ if st.session_state.tags:
             if st.button(f"Remove Tag {idx}"):
                 st.session_state.tags.pop(idx)
                 st.rerun()
-
-# Generate PDF button
-if st.session_state.tags:
-    if st.button("Generate PDF"):
-        pdf = generate_pdf()
-        st.download_button(
-            label="Download PDF",
-            data=pdf,
-            file_name="price_tags.pdf",
-            mime="application/pdf"
-        )
-else:
-    st.info("Add some tags to generate a PDF")
