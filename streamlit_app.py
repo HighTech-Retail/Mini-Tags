@@ -501,7 +501,7 @@ def generate_pdf():
             # Calculate total height needed for text
             line_height = 14 / 72  # 14pt in inches
             total_height = line_height * len(lines)
-            start_y = y_position - 0.25*inch
+            start_y = y_position - 0.45*inch
             
             # Draw each line centered
             for line in lines:
