@@ -286,7 +286,7 @@ with st.sidebar:
     st.subheader("Font Settings")
     font_name = st.selectbox("Font", ["Helvetica"], help="Select font family")
     font_size = st.number_input("Base Font Size", min_value=8, max_value=24, value=12)
-    price_size = st.number_input("Price Font Size", min_value=8, max_value=36, value=16)
+    price_size = st.number_input("Price Font Size", min_value=8, max_value=36, value=14)
     margin = st.number_input("Margin (inches)", min_value=0.1, max_value=0.5, value=0.25, step=0.05)
 
 # Main content
