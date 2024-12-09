@@ -237,7 +237,28 @@ def auto_split_text(text, max_width, c, initial_font_size=12):
     """Automatically split and size text to fit within max_width"""
     from reportlab.pdfbase import pdfmetrics
     
-    words = text.upper().split()
+    text = text.upper()
+    
+    # Special handling for measurement-based descriptions
+    if any(x in text for x in ['X', '/']):
+        # For items with measurements, try to split after the measurements
+        parts = text.split(',', 1)  # Split at first comma if exists
+        if len(parts) > 1:
+            return [parts[0].strip(), parts[1].strip()], initial_font_size
+        
+        # If no comma, try to split after the measurements
+        if 'X' in text:
+            # Find the last X in the measurements
+            last_x_pos = text.rindex('X')
+            # Look for the end of the measurements (next space after numbers)
+            pos = last_x_pos
+            while pos < len(text) and (text[pos].isdigit() or text[pos] in '/X. '):
+                pos += 1
+            if pos < len(text):
+                return [text[:pos].strip(), text[pos:].strip()], initial_font_size
+    
+    # If we get here, use the standard word-based splitting
+    words = text.split()
     if not words:
         return [], initial_font_size
     
