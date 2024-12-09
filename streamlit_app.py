@@ -291,26 +291,113 @@ if uploaded_file:
     
     try:
         # Process the PDF and get tags
-        with st.expander("PDF Processing Details", expanded=True):
-            st.write("Processing PDF pages...")
-            tags = extract_text_from_pdf(tmp_file_path)
+        st.write("Processing PDF pages...")
+        tags = extract_text_from_pdf(tmp_file_path)
+        
+        if tags:
+            st.success(f"Found {len(tags)} valid tags!")
+            st.session_state.tags = tags
             
-            if tags:
-                st.success(f"Found {len(tags)} valid tags!")
-                st.session_state.tags = tags
+            # Validate tags
+            st.session_state.tag_exceptions = validate_tags(tags)
+            
+            # Show tag preview
+            st.subheader("Preview of Extracted Tags")
+            for idx, tag in enumerate(tags):
+                with st.container():
+                    cols = st.columns([2, 1, 1])
+                    with cols[0]:
+                        st.write(f"**{tag['productName']}**")
+                    with cols[1]:
+                        st.write(f"SKU: {tag['sku']}")
+                    with cols[2]:
+                        st.write(f"Price: ${tag['price']}")
+            
+            # Handle exceptions if any
+            if st.session_state.tag_exceptions:
+                st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
                 
-                # Validate tags
-                st.session_state.tag_exceptions = validate_tags(tags)
+                st.subheader("🔧 Review and Edit Long Product Names")
+                st.write("The following product names may be too long for optimal display. Edit if needed:")
                 
-                # Handle exceptions
-                if not handle_tag_exceptions():
-                    st.stop()
+                for idx, exception in st.session_state.tag_exceptions.items():
+                    tag = exception['tag']
+                    issues = exception['issues']
                     
-            else:
-                st.error("No valid tags found. Please check if the PDF format is correct.")
-                st.session_state.tags = []
-                st.session_state.tag_exceptions = {}
-                st.session_state.resolved_tags = {}
+                    st.markdown("---")
+                    cols = st.columns([3, 1])
+                    with cols[0]:
+                        st.write(f"**SKU:** {tag['sku']}")
+                        
+                        # Show length warning with color
+                        for issue in issues:
+                            if issue['type'] == 'text_overflow':
+                                ratio = issue['width_ratio']
+                                color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
+                                st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
+                        
+                        new_text = st.text_input(
+                            "Edit product name if needed:",
+                            value=tag['productName'],
+                            key=f"fix_{idx}"
+                        )
+                        
+                        # Show live preview of text width
+                        if new_text:
+                            from reportlab.pdfbase import pdfmetrics
+                            new_width = pdfmetrics.stringWidth(new_text.upper(), 'Helvetica-Bold', 12)
+                            ratio = new_width / (3.6 * inch)
+                            color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
+                            st.markdown(f"<p style='color: {color}'>Current width: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
+                    
+                    with cols[1]:
+                        st.write(f"**Price:** ${tag['price']}")
+                        if st.button(f"Save Changes", key=f"save_{idx}"):
+                            if new_text != tag['productName']:
+                                # Validate the new text
+                                if validate_tag_text(new_text.upper(), 3.6 * inch):
+                                    st.session_state.resolved_tags[idx] = {
+                                        **tag,
+                                        'productName': new_text
+                                    }
+                                    st.success("Updated! Text fits within limits.")
+                                else:
+                                    st.error("Text is still too long! Try making it shorter.")
+                
+                st.markdown("---")
+                cols = st.columns([1, 1])
+                with cols[0]:
+                    if st.session_state.resolved_tags and st.button("Continue with Changes", type="primary"):
+                        # Update the original tags with resolved ones
+                        for idx, resolved_tag in st.session_state.resolved_tags.items():
+                            st.session_state.tags[idx] = resolved_tag
+                        st.session_state.tag_exceptions = {}
+                        st.session_state.resolved_tags = {}
+                        st.rerun()
+                
+                with cols[1]:
+                    if st.button("Continue without Changes", type="secondary"):
+                        st.session_state.tag_exceptions = {}
+                        st.session_state.resolved_tags = {}
+                        st.rerun()
+            
+            # Show generate button only if no exceptions or they've been handled
+            if not st.session_state.tag_exceptions:
+                st.markdown("---")
+                if st.button("Generate PDF", type="primary"):
+                    pdf = generate_pdf()
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf,
+                        file_name="price_tags.pdf",
+                        mime="application/pdf"
+                    )
+                    
+        else:
+            st.error("No valid tags found. Please check if the PDF format is correct.")
+            st.session_state.tags = []
+            st.session_state.tag_exceptions = {}
+            st.session_state.resolved_tags = {}
         
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
