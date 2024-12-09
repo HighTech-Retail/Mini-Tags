@@ -233,91 +233,135 @@ def validate_tags(tags):
     
     return exceptions
 
-def handle_tag_exceptions():
-    """UI for handling tag exceptions"""
-    if not st.session_state.tag_exceptions:
-        return True
+def auto_split_text(text, max_width, c, initial_font_size=12):
+    """Automatically split and size text to fit within max_width"""
+    from reportlab.pdfbase import pdfmetrics
     
-    st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
+    words = text.upper().split()
+    if not words:
+        return [], initial_font_size
     
-    with st.expander("🔧 Review and Edit Long Product Names", expanded=True):
-        st.write("The following product names may be too long for optimal display. You can:")
-        st.write("1. Edit the text to make it shorter")
-        st.write("2. Add a line break using '|' where you want to split the name (e.g. 'FIRST LINE|SECOND LINE')")
+    # Try different font sizes if needed
+    font_size = initial_font_size
+    while font_size >= 9:  # Don't go smaller than 9pt
+        lines = []
+        current_line = []
         
-        for idx, exception in st.session_state.tag_exceptions.items():
-            tag = exception['tag']
-            issues = exception['issues']
+        for word in words:
+            # Test adding this word to current line
+            test_line = ' '.join(current_line + [word])
+            width = pdfmetrics.stringWidth(test_line, 'Helvetica-Bold', font_size)
             
-            st.markdown("---")
-            cols = st.columns([3, 1])
-            with cols[0]:
-                st.write(f"**SKU:** {tag['sku']}")
-                
-                # Show length warning with color
-                for issue in issues:
-                    if issue['type'] == 'text_overflow':
-                        ratio = issue['width_ratio']
-                        color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
-                        st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
-                
-                # Add helper text for line breaks
-                current_text = tag['productName']
-                if '|' in current_text:  # If already has a line break
-                    current_text = current_text.replace('|', '\n')
-                    st.write("Current preview:")
-                    st.code(current_text)
-                    
-                new_text = st.text_input(
-                    "Edit product name (use | for line break):",
-                    value=tag['productName'],
-                    key=f"fix_{idx}",
-                    help="Use | to split text into multiple lines. Example: FIRST LINE|SECOND LINE"
-                )
-                
-                # Show live preview of text width for each line
-                if new_text:
-                    from reportlab.pdfbase import pdfmetrics
-                    lines = new_text.split('|')
-                    st.write("Width preview for each line:")
-                    for i, line in enumerate(lines, 1):
-                        text_width = pdfmetrics.stringWidth(line.upper().strip(), 'Helvetica-Bold', 12)
-                        ratio = text_width / (3.6 * inch)
-                        color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
-                        st.markdown(f"<p style='color: {color}'>Line {i}: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
-                        
-                        if i > 1 and ratio > 1.2:  # Stricter limit for second line
-                            st.warning("⚠️ Second line should be shorter to avoid overlapping with other content")
-            
-            with cols[1]:
-                st.write(f"**Price:** ${tag['price']}")
-                if st.button(f"Save Changes", key=f"save_{idx}"):
-                    if new_text != tag['productName']:
-                        # Validate the new text
-                        if validate_tag_text(new_text.upper(), 3.6 * inch):
-                            st.session_state.resolved_tags[idx] = {
-                                **tag,
-                                'productName': new_text
-                            }
-                            st.success("Updated! Text fits within limits.")
-                        else:
-                            st.error("Text is still too long! Try making it shorter.")
+            if not current_line or width <= max_width * (1.5 if len(lines) == 0 else 1.2):
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                else:
+                    # Single word is too long, force it and try smaller font
+                    lines.append(word)
         
-        st.markdown("---")
-        if st.session_state.resolved_tags:
-            if st.button("Continue with Changes", type="primary"):
-                # Update the original tags with resolved ones
-                for idx, resolved_tag in st.session_state.resolved_tags.items():
-                    st.session_state.tags[idx] = resolved_tag
-                st.session_state.tag_exceptions = {}
-                st.session_state.resolved_tags = {}
-                return True
+        # Add remaining words
+        if current_line:
+            lines.append(' '.join(current_line))
         
-        if st.button("Continue without Changes", type="secondary"):
-            st.session_state.tag_exceptions = {}
-            return True
+        # If we have 1-2 lines and they fit, we're done
+        if len(lines) <= 2:
+            all_fit = True
+            for i, line in enumerate(lines):
+                width = pdfmetrics.stringWidth(line, 'Helvetica-Bold', font_size)
+                max_allowed = max_width * (1.5 if i == 0 else 1.2)
+                if width > max_allowed:
+                    all_fit = False
+                    break
+            if all_fit:
+                return lines, font_size
+        
+        # If we get here, try a smaller font
+        font_size -= 1
     
-    return False
+    # If we get here, use smallest font and force split into two lines
+    font_size = 9
+    if len(lines) > 2:
+        # Combine excess lines into second line
+        lines = [lines[0], ' '.join(lines[1:])]
+    return lines, font_size
+
+def generate_pdf():
+    buffer = io.BytesIO()
+    page_width = 8.5 * inch
+    page_height = 11 * inch
+    tag_width = 4 * inch
+    tag_height = 1.5 * inch
+    
+    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
+    
+    # Calculate starting positions
+    left_margin = (page_width - tag_width) / 2
+    top_margin = page_height - inch
+    
+    # Process tags in groups of 6
+    for i in range(0, len(st.session_state.tags), 6):
+        group = st.session_state.tags[i:i+6]
+        y_position = top_margin
+        
+        for tag in group:
+            # Draw blue bar at bottom of tag
+            c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
+            c.rect(left_margin, y_position - tag_height + 0.1*inch, 
+                  tag_width, 0.2*inch, fill=1)
+            c.setFillColorRGB(0, 0, 0)  # Back to black
+            
+            # Draw tag border
+            c.setLineWidth(1)
+            c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
+            
+            # Auto-split and size product name
+            lines, font_size = auto_split_text(tag['productName'], 3.6 * inch, c)
+            
+            # Draw product name
+            c.setFont('Helvetica-Bold', font_size)
+            
+            # Calculate vertical spacing based on number of lines
+            if len(lines) == 1:
+                start_y = y_position - 0.45*inch
+                line_spacing = 0
+            else:
+                start_y = y_position - 0.35*inch  # Start higher for two lines
+                line_spacing = 0.15 * inch
+            
+            # Draw each line centered
+            for i, line in enumerate(lines):
+                text_width = c.stringWidth(line, 'Helvetica-Bold', font_size)
+                x = left_margin + (tag_width - text_width) / 2
+                c.drawString(x, start_y - (i * line_spacing), line)
+            
+            # Draw model number in italics, centered
+            c.setFont('Helvetica-Oblique', 10)
+            model_text = f"Model: {tag['sku']}"
+            text_width = c.stringWidth(model_text, 'Helvetica-Oblique', 10)
+            x = left_margin + (tag_width - text_width) / 2
+            c.drawString(x, y_position - 0.8*inch, model_text)
+            
+            # Draw price (large and bold), centered
+            c.setFont('Helvetica-Bold', 14)
+            price_text = f"Price: ${tag['price']}"
+            text_width = c.stringWidth(price_text, 'Helvetica-Bold', 14)
+            x = left_margin + (tag_width - text_width) / 2
+            c.drawString(x, y_position - 1.1*inch, price_text)
+            
+            # Move to next tag position
+            y_position -= tag_height + 0.2*inch
+        
+        # Start new page if we have more tags
+        if i + 6 < len(st.session_state.tags):
+            c.showPage()
+            c.setFont('Helvetica', 12)
+    
+    c.save()
+    buffer.seek(0)
+    return buffer
 
 # File upload section
 st.header("Upload Source PDF")
@@ -337,9 +381,6 @@ if uploaded_file:
             st.success(f"Found {len(tags)} valid tags!")
             st.session_state.tags = tags
             
-            # Validate tags
-            st.session_state.tag_exceptions = validate_tags(tags)
-            
             # Show tag preview
             st.subheader("Preview of Extracted Tags")
             for idx, tag in enumerate(tags):
@@ -352,102 +393,17 @@ if uploaded_file:
                     with cols[2]:
                         st.write(f"Price: ${tag['price']}")
             
-            # Handle exceptions if any
-            if st.session_state.tag_exceptions:
-                st.warning(f"Found {len(st.session_state.tag_exceptions)} tags that may need attention")
+            # Show generate button
+            st.markdown("---")
+            if st.button("Generate PDF", type="primary"):
+                pdf = generate_pdf()
+                st.download_button(
+                    label="Download PDF",
+                    data=pdf,
+                    file_name="price_tags.pdf",
+                    mime="application/pdf"
+                )
                 
-                st.subheader("🔧 Review and Edit Long Product Names")
-                st.write("The following product names may be too long for optimal display. You can:")
-                st.write("1. Edit the text to make it shorter")
-                st.write("2. Add a line break using '|' where you want to split the name (e.g. 'FIRST LINE|SECOND LINE')")
-                
-                for idx, exception in st.session_state.tag_exceptions.items():
-                    tag = exception['tag']
-                    issues = exception['issues']
-                    
-                    st.markdown("---")
-                    cols = st.columns([3, 1])
-                    with cols[0]:
-                        st.write(f"**SKU:** {tag['sku']}")
-                        
-                        # Show length warning with color
-                        for issue in issues:
-                            if issue['type'] == 'text_overflow':
-                                ratio = issue['width_ratio']
-                                color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "yellow"
-                                st.markdown(f"<p style='color: {color}'>{issue['message']}</p>", unsafe_allow_html=True)
-                        
-                        # Add helper text for line breaks
-                        current_text = tag['productName']
-                        if '|' in current_text:  # If already has a line break
-                            current_text = current_text.replace('|', '\n')
-                            st.write("Current preview:")
-                            st.code(current_text)
-                            
-                        new_text = st.text_input(
-                            "Edit product name (use | for line break):",
-                            value=tag['productName'],
-                            key=f"fix_{idx}",
-                            help="Use | to split text into multiple lines. Example: FIRST LINE|SECOND LINE"
-                        )
-                        
-                        # Show live preview of text width for each line
-                        if new_text:
-                            from reportlab.pdfbase import pdfmetrics
-                            lines = new_text.split('|')
-                            st.write("Width preview for each line:")
-                            for i, line in enumerate(lines, 1):
-                                text_width = pdfmetrics.stringWidth(line.upper().strip(), 'Helvetica-Bold', 12)
-                                ratio = text_width / (3.6 * inch)
-                                color = "red" if ratio > 1.5 else "orange" if ratio > 1.2 else "green"
-                                st.markdown(f"<p style='color: {color}'>Line {i}: {int(ratio*100)}% of available space</p>", unsafe_allow_html=True)
-                                
-                                if i > 1 and ratio > 1.2:  # Stricter limit for second line
-                                    st.warning("⚠️ Second line should be shorter to avoid overlapping with other content")
-                    
-                    with cols[1]:
-                        st.write(f"**Price:** ${tag['price']}")
-                        if st.button(f"Save Changes", key=f"save_{idx}"):
-                            if new_text != tag['productName']:
-                                # Validate the new text
-                                if validate_tag_text(new_text.upper(), 3.6 * inch):
-                                    st.session_state.resolved_tags[idx] = {
-                                        **tag,
-                                        'productName': new_text
-                                    }
-                                    st.success("Updated! Text fits within limits.")
-                                else:
-                                    st.error("Text is still too long! Try making it shorter.")
-                
-                st.markdown("---")
-                cols = st.columns([1, 1])
-                with cols[0]:
-                    if st.session_state.resolved_tags and st.button("Continue with Changes", type="primary"):
-                        # Update the original tags with resolved ones
-                        for idx, resolved_tag in st.session_state.resolved_tags.items():
-                            st.session_state.tags[idx] = resolved_tag
-                        st.session_state.tag_exceptions = {}
-                        st.session_state.resolved_tags = {}
-                        st.rerun()
-                
-                with cols[1]:
-                    if st.button("Continue without Changes", type="secondary"):
-                        st.session_state.tag_exceptions = {}
-                        st.session_state.resolved_tags = {}
-                        st.rerun()
-            
-            # Show generate button only if no exceptions or they've been handled
-            if not st.session_state.tag_exceptions:
-                st.markdown("---")
-                if st.button("Generate PDF", type="primary"):
-                    pdf = generate_pdf()
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf,
-                        file_name="price_tags.pdf",
-                        mime="application/pdf"
-                    )
-                    
         else:
             st.error("No valid tags found. Please check if the PDF format is correct.")
             st.session_state.tags = []
@@ -519,82 +475,6 @@ if st.session_state.tags:
             if st.button(f"Remove Tag {idx}"):
                 st.session_state.tags.pop(idx)
                 st.rerun()
-
-def generate_pdf():
-    buffer = io.BytesIO()
-    page_width = 8.5 * inch
-    page_height = 11 * inch
-    tag_width = 4 * inch
-    tag_height = 1.5 * inch
-    
-    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
-    
-    # Calculate starting positions
-    left_margin = (page_width - tag_width) / 2
-    top_margin = page_height - inch
-    
-    # Process tags in groups of 6
-    for i in range(0, len(st.session_state.tags), 6):
-        group = st.session_state.tags[i:i+6]
-        y_position = top_margin
-        
-        for tag in group:
-            # Draw blue bar at bottom of tag
-            c.setFillColorRGB(0, 0.3, 0.8)  # Dark blue
-            c.rect(left_margin, y_position - tag_height + 0.1*inch, 
-                  tag_width, 0.2*inch, fill=1)
-            c.setFillColorRGB(0, 0, 0)  # Back to black
-            
-            # Draw tag border
-            c.setLineWidth(1)
-            c.rect(left_margin, y_position - tag_height, tag_width, tag_height)
-            
-            # Handle multi-line product names
-            c.setFont('Helvetica-Bold', 12)
-            # Split by either manual line breaks (|) or automatic ones (\n)
-            lines = tag['productName'].replace('|', '\n').upper().split('\n')
-            
-            # Calculate total height needed for text
-            line_height = 14 / 72  # 14pt in inches
-            total_height = line_height * len(lines)
-            start_y = y_position - 0.45*inch
-            
-            # Draw each line centered
-            for i, line in enumerate(lines):
-                text_width = c.stringWidth(line.strip(), 'Helvetica-Bold', 12)
-                x = left_margin + (tag_width - text_width) / 2
-                # Adjust spacing between lines based on number of lines
-                if len(lines) > 1:
-                    line_spacing = 0.15 * inch  # Slightly closer together for multiple lines
-                else:
-                    line_spacing = line_height * inch
-                c.drawString(x, start_y - (i * line_spacing), line.strip())
-            
-            # Draw model number in italics, centered
-            c.setFont('Helvetica-Oblique', 10)
-            model_text = f"Model: {tag['sku']}"
-            text_width = c.stringWidth(model_text, 'Helvetica-Oblique', 10)
-            x = left_margin + (tag_width - text_width) / 2
-            c.drawString(x, y_position - 0.8*inch, model_text)
-            
-            # Draw price (large and bold), centered
-            c.setFont('Helvetica-Bold', 14)
-            price_text = f"Price: ${tag['price']}"
-            text_width = c.stringWidth(price_text, 'Helvetica-Bold', 14)
-            x = left_margin + (tag_width - text_width) / 2
-            c.drawString(x, y_position - 1.1*inch, price_text)
-            
-            # Move to next tag position
-            y_position -= tag_height + 0.2*inch
-        
-        # Start new page if we have more tags
-        if i + 6 < len(st.session_state.tags):
-            c.showPage()
-            c.setFont('Helvetica', 12)
-    
-    c.save()
-    buffer.seek(0)
-    return buffer
 
 # Generate PDF button
 if st.session_state.tags:
