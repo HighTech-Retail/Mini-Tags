@@ -85,30 +85,46 @@ def parse_single_tag(text):
                 tag['barcode'] = ''.join(filter(str.isalnum, sku))
                 break
         
-        # Find price
+        # Find price - look for both formats
         for line in lines:
             if 'Regular Price: $' in line:
                 price = line.replace('Regular Price: $', '').strip()
                 tag['price'] = price
                 break
+            elif line.strip().startswith('$') and line.strip().replace('.', '').replace('$', '').isdigit():
+                # If it's just a dollar amount alone
+                tag['price'] = line.strip().replace('$', '')
+                break
         
-        # Find product name (usually between Model # and Regular Price)
+        # Find product name (between Model # and Regular Price/dollar amount)
         try:
             model_idx = next(i for i, line in enumerate(lines) if 'Model #:' in line)
-            price_idx = next(i for i, line in enumerate(lines) if 'Regular Price:' in line)
             
-            # Get all lines between model and price
-            name_lines = [line.strip() for line in lines[model_idx+1:price_idx] if line.strip()]
-            if name_lines:
-                tag['productName'] = ' '.join(name_lines)
+            # Find the price line index
+            price_idx = None
+            for i, line in enumerate(lines[model_idx+1:], start=model_idx+1):
+                if ('Regular Price: $' in line or 
+                    (line.strip().startswith('$') and line.strip().replace('.', '').replace('$', '').isdigit())):
+                    price_idx = i
+                    break
+            
+            if price_idx:
+                # Get the line immediately after Model # if it's not a system line
+                product_line = lines[model_idx + 1].strip()
+                if not any(x in product_line.lower() for x in ['contracts available', 'fireplace distributors', 'hearth >']):
+                    tag['productName'] = product_line
         except:
             # Fallback: look for any substantial line that's not category/model/price
             for line in lines:
-                if (len(line.strip()) > 10 and 
+                line = line.strip()
+                if (len(line) > 10 and 
                     'Hearth >' not in line and 
                     'Model #:' not in line and 
-                    'Regular Price:' not in line):
-                    tag['productName'] = line.strip()
+                    'Regular Price:' not in line and
+                    'Contracts Available' not in line and
+                    'Fireplace Distributors' not in line and
+                    not line.startswith('$')):
+                    tag['productName'] = line
                     break
         
         # Validate tag has all required fields
@@ -176,10 +192,17 @@ def validate_tag_text(text, max_width, font_name='Helvetica-Bold', font_size=12)
     """Calculate if text will fit within max_width"""
     from reportlab.pdfbase import pdfmetrics
     
-    # Get the width of the text
-    text_width = pdfmetrics.stringWidth(text, font_name, font_size)
-    # Allow more generous threshold - about 45 characters for typical text
-    return text_width <= max_width * 1.5  # Increased tolerance to 50%
+    # Split text into lines if it contains the separator
+    lines = text.split('|')
+    
+    # Check each line separately
+    for i, line in enumerate(lines):
+        text_width = pdfmetrics.stringWidth(line.strip().upper(), font_name, font_size)
+        # First line can be longer than second line
+        max_allowed = max_width * (1.5 if i == 0 else 1.2)
+        if text_width > max_allowed:
+            return False
+    return True
 
 def validate_tags(tags):
     """Check all tags for potential issues"""
