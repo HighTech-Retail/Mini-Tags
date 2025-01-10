@@ -363,7 +363,9 @@ def generate_pdf():
             
             # Draw price (large and bold), centered
             c.setFont('Helvetica-Bold', 14)
-            price_text = f"Price: ${tag['price']}"
+            # Ensure price is properly formatted
+            price = tag['price'].strip().replace('$', '')
+            price_text = f"Price: ${price}"
             text_width = c.stringWidth(price_text, 'Helvetica-Bold', 14)
             x = left_margin + (tag_width - text_width) / 2
             c.drawString(x, y_position - 1.1*inch, price_text)
@@ -511,9 +513,19 @@ if st.session_state.tags:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("Update", key=f"update_{idx}"):
-                        # Update price in session state
-                        st.session_state.tags[idx]['price'] = new_price.strip()
-                        st.rerun()
+                        try:
+                            # Validate price format
+                            new_price = new_price.strip()
+                            # Remove any existing $ symbol
+                            new_price = new_price.replace('$', '')
+                            # Ensure it's a valid number
+                            float(new_price)  # This will raise ValueError if not a valid number
+                            # Update price in session state
+                            st.session_state.tags[idx]['price'] = new_price
+                            st.success(f"Price updated to ${new_price}")
+                            st.rerun()
+                        except ValueError:
+                            st.error("Please enter a valid price (numbers only)")
                 with col2:
                     if st.button("Remove", key=f"remove_{idx}"):
                         st.session_state.tags.pop(idx)
