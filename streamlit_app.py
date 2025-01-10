@@ -87,18 +87,28 @@ def parse_single_tag(text):
                 model_line_idx = i
                 break
         
-        # Find price - look for both formats
+        # Find price - prioritize standalone price over Regular Price
         price_line_idx = None
+        standalone_price = None
+        regular_price = None
+        regular_price_idx = None
+        
         for i, line in enumerate(lines):
-            if 'Regular Price: $' in line:
-                price = line.replace('Regular Price: $', '').strip()
-                tag['price'] = price
+            line = line.strip()
+            if line.startswith('$') and any(c.isdigit() for c in line):
+                standalone_price = line.replace('$', '').strip()
                 price_line_idx = i
-                break
-            elif line.strip().startswith('$') and any(c.isdigit() for c in line):
-                tag['price'] = line.strip().replace('$', '')
-                price_line_idx = i
-                break
+            elif 'Regular Price: $' in line:
+                regular_price = line.replace('Regular Price: $', '').strip()
+                regular_price_idx = i
+        
+        # Use standalone price if available, otherwise use regular price
+        if standalone_price:
+            tag['price'] = standalone_price
+            price_line_idx = price_line_idx
+        elif regular_price:
+            tag['price'] = regular_price
+            price_line_idx = regular_price_idx
         
         # Find product name - combine all relevant lines between model and price
         if model_line_idx is not None and price_line_idx is not None:
