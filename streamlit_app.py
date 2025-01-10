@@ -105,6 +105,7 @@ def parse_single_tag(text):
                     'Hearth >' not in line and
                     'Contracts Available' not in line and
                     'Fireplace Distributors' not in line and
+                    'Regular Price:' not in line and
                     not line.startswith('$')):
                     product_lines.append(line)
             
@@ -400,10 +401,14 @@ if uploaded_file:
             # Show tag preview
             st.subheader("Preview of Extracted Tags")
             for idx, tag in enumerate(tags):
+                # Clean up product name by removing any remaining Regular Price text
+                product_name = tag['productName'].split('Regular Price:')[0].strip()
+                tag['productName'] = product_name  # Update the stored name
+                
                 with st.container():
                     cols = st.columns([3, 1])
                     with cols[0]:
-                        st.write(f"**{tag['productName']}**")
+                        st.write(f"**{product_name}**")
                         st.write(f"SKU: {tag['sku']}")
                     with cols[1]:
                         st.write(f"${tag['price']}")
@@ -482,7 +487,9 @@ with st.form("new_tag"):
 if st.session_state.tags:
     st.subheader("Current Tags")
     for idx, tag in enumerate(st.session_state.tags):
-        with st.expander(f"{tag['productName']}"):
+        # Clean up product name in expander title
+        product_name = tag['productName'].split('Regular Price:')[0].strip()
+        with st.expander(f"{product_name}"):
             cols = st.columns([2, 1])
             
             with cols[0]:
