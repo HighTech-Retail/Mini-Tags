@@ -498,10 +498,29 @@ if st.session_state.tags:
     st.subheader("Current Tags")
     for idx, tag in enumerate(st.session_state.tags):
         with st.expander(f"{tag['productName']} - ${tag['price']}"):
-            st.write(f"SKU: {tag['sku']}")
-            st.write(f"Barcode: {tag['barcode']}")
-            if tag['description']:
-                st.write(f"Description: {tag['description']}")
-            if st.button(f"Remove Tag {idx}"):
-                st.session_state.tags.pop(idx)
-                st.rerun()
+            cols = st.columns([2, 1])
+            
+            with cols[0]:
+                st.write(f"SKU: {tag['sku']}")
+                st.write(f"Barcode: {tag['barcode']}")
+                if tag['description']:
+                    st.write(f"Description: {tag['description']}")
+            
+            with cols[1]:
+                # Add price editing
+                new_price = st.text_input(
+                    "Edit Price",
+                    value=tag['price'],
+                    key=f"price_edit_{idx}"
+                )
+                
+                # Update and Remove buttons side by side
+                update_col, remove_col = st.columns(2)
+                with update_col:
+                    if st.button(f"Update Price", key=f"update_{idx}"):
+                        st.session_state.tags[idx]['price'] = new_price
+                        st.rerun()
+                with remove_col:
+                    if st.button(f"Remove Tag", key=f"remove_{idx}"):
+                        st.session_state.tags.pop(idx)
+                        st.rerun()
