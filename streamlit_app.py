@@ -87,28 +87,14 @@ def parse_single_tag(text):
                 model_line_idx = i
                 break
         
-        # Find price - prioritize standalone price over Regular Price
+        # Find price - only look for standalone price
         price_line_idx = None
-        standalone_price = None
-        regular_price = None
-        regular_price_idx = None
-        
         for i, line in enumerate(lines):
             line = line.strip()
             if line.startswith('$') and any(c.isdigit() for c in line):
-                standalone_price = line.replace('$', '').strip()
+                tag['price'] = line.replace('$', '').strip()
                 price_line_idx = i
-            elif 'Regular Price: $' in line:
-                regular_price = line.replace('Regular Price: $', '').strip()
-                regular_price_idx = i
-        
-        # Use standalone price if available, otherwise use regular price
-        if standalone_price:
-            tag['price'] = standalone_price
-            price_line_idx = price_line_idx
-        elif regular_price:
-            tag['price'] = regular_price
-            price_line_idx = regular_price_idx
+                break
         
         # Find product name - combine all relevant lines between model and price
         if model_line_idx is not None and price_line_idx is not None:
@@ -415,13 +401,12 @@ if uploaded_file:
             st.subheader("Preview of Extracted Tags")
             for idx, tag in enumerate(tags):
                 with st.container():
-                    cols = st.columns([2, 1, 1])
+                    cols = st.columns([3, 1])
                     with cols[0]:
                         st.write(f"**{tag['productName']}**")
-                    with cols[1]:
                         st.write(f"SKU: {tag['sku']}")
-                    with cols[2]:
-                        st.write(f"Price: ${tag['price']}")
+                    with cols[1]:
+                        st.write(f"${tag['price']}")
             
             # Show generate button
             st.markdown("---")
@@ -497,30 +482,32 @@ with st.form("new_tag"):
 if st.session_state.tags:
     st.subheader("Current Tags")
     for idx, tag in enumerate(st.session_state.tags):
-        with st.expander(f"{tag['productName']} - ${tag['price']}"):
+        with st.expander(f"{tag['productName']}"):
             cols = st.columns([2, 1])
             
             with cols[0]:
                 st.write(f"SKU: {tag['sku']}")
                 st.write(f"Barcode: {tag['barcode']}")
-                if tag['description']:
+                if tag.get('description'):  # Use get() to avoid KeyError
                     st.write(f"Description: {tag['description']}")
             
             with cols[1]:
-                # Add price editing
+                # Price editing
                 new_price = st.text_input(
-                    "Edit Price",
+                    "Price",
                     value=tag['price'],
-                    key=f"price_edit_{idx}"
+                    key=f"price_edit_{idx}",
+                    help="Enter new price without $ symbol"
                 )
                 
                 # Update and Remove buttons side by side
-                update_col, remove_col = st.columns(2)
-                with update_col:
-                    if st.button(f"Update Price", key=f"update_{idx}"):
-                        st.session_state.tags[idx]['price'] = new_price
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Update", key=f"update_{idx}"):
+                        # Update price in session state
+                        st.session_state.tags[idx]['price'] = new_price.strip()
                         st.rerun()
-                with remove_col:
-                    if st.button(f"Remove Tag", key=f"remove_{idx}"):
+                with col2:
+                    if st.button("Remove", key=f"remove_{idx}"):
                         st.session_state.tags.pop(idx)
                         st.rerun()
