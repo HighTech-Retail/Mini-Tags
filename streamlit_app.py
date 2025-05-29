@@ -28,6 +28,17 @@ if 'resolved_tags' not in st.session_state:
 if 'debug_log' not in st.session_state:
     st.session_state.debug_log = []
 
+def update_tag_selection(idx, checkbox_key):
+    """Update a tag's selected_for_print status based on checkbox change"""
+    # Get the new checkbox value from session state
+    is_selected = st.session_state[checkbox_key]
+    # Update the tag's selected_for_print attribute
+    if 0 <= idx < len(st.session_state.tags):
+        st.session_state.tags[idx]['selected_for_print'] = is_selected
+        add_to_debug_log(f"Tag {idx} selection status updated to: {is_selected}")
+    else:
+        add_to_debug_log(f"Error: Invalid tag index {idx} in update_tag_selection")
+
 def split_image_into_quarters(image):
     """Split the image into four equal quarters"""
     width, height = image.size
@@ -480,14 +491,25 @@ if uploaded_file:
 
                     with cols[1]:
                         # Checkbox for selecting tag to print
+                        # First, ensure the tag has the selected_for_print property initialized
+                        if 'selected_for_print' not in tag_data:
+                            st.session_state.tags[idx]['selected_for_print'] = False
+                        
+                        # Create a unique key for this checkbox
+                        checkbox_key = f"select_print_{idx}"
+                        
+                        # The checkbox itself - using a key that includes the tag index
+                        # and the current value to prevent unwanted state changes
                         is_selected = st.checkbox(
                             "Select for Printing", 
-                            value=tag_data.get('selected_for_print', False), 
-                            key=f"select_print_{idx}"
+                            value=tag_data.get('selected_for_print', False),
+                            key=f"{checkbox_key}_{tag_data.get('selected_for_print', False)}"
                         )
+                        
+                        # Only update if the value has changed
                         if is_selected != tag_data.get('selected_for_print', False):
                             st.session_state.tags[idx]['selected_for_print'] = is_selected
-                            st.rerun()
+                            # No st.rerun() here - let Streamlit handle the UI update naturally
                         
                         # Price
                         current_price = tag_data.get('price', '')
