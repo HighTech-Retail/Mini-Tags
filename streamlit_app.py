@@ -113,14 +113,29 @@ def parse_single_tag(text):
                 # Join all product lines, replacing multiple spaces with single space
                 tag['productName'] = ' '.join(' '.join(product_lines).split())
         
-        # Validate tag has all required fields
+        # Ensure all required fields are present, if not, mark them
         required_fields = ['sku', 'productName', 'price', 'barcode']
-        if all(field in tag for field in required_fields):
-            return tag
-        else:
-            missing = [field for field in required_fields if field not in tag]
-            st.write(f"Missing fields in tag: {missing}")
-            return None
+        missing_fields = []
+        for field in required_fields:
+            if field not in tag or not tag[field]: # Check if field is missing or empty
+                tag[field] = "" # Set to empty string if missing
+                if field not in ['barcode']: # Barcode is derived, so don't mark as user-missing if SKU is there
+                    missing_fields.append(field)
+        
+        # If SKU is present but barcode is missing (e.g. from manual add), generate it
+        if tag.get('sku') and not tag.get('barcode') and 'barcode' in missing_fields:
+            tag['barcode'] = ''.join(filter(str.isalnum, tag['sku']))
+            if 'barcode' in missing_fields: # Re-evaluate if barcode is still missing
+                 missing_fields.remove('barcode')
+
+        # Special handling if productName is missing but other fields might imply it's an OCR error for a whole tag
+        if not tag.get('productName') and not tag.get('sku') and not tag.get('price'):
+             # If all key identifiable fields are missing, it's likely not a valid tag segment
+             add_to_debug_log(f"Skipping segment due to multiple missing core fields: {lines}")
+             return None # Indicate no valid tag found
+
+        tag['_missing_fields'] = missing_fields
+        return tag
             
     except Exception as e:
         st.write(f"Error parsing tag: {str(e)}")
@@ -402,29 +417,108 @@ if uploaded_file:
             
             # Show tag preview
             st.subheader("Preview of Extracted Tags")
-            for idx, tag in enumerate(tags):
-                # Clean up product name by removing any remaining Regular Price text
-                product_name = tag['productName'].split('Regular Price:')[0].strip()
-                tag['productName'] = product_name  # Update the stored name
+            for idx, tag_data in enumerate(st.session_state.tags):
+                missing_fields = tag_data.get('_missing_fields', [])
                 
                 with st.container():
+                    if missing_fields:
+                        st.warning(f"Tag {idx + 1} has missing information. Please fill in the fields below.")
+                    
                     cols = st.columns([3, 1])
+                    
                     with cols[0]:
-                        st.write(f"**{product_name}**")
-                        st.write(f"SKU: {tag['sku']}")
+                        # Product Name
+                        current_pn = tag_data.get('productName', '')
+                        label_pn = "Product Name"
+                        if 'productName' in missing_fields:
+                            label_pn += " (REQUIRED)"
+                        
+                        input_pn = st.text_input(
+                            label_pn, 
+                            value=current_pn.split('Regular Price:')[0].strip(), 
+                            key=f"preview_pn_{idx}"
+                        )
+                        if input_pn != current_pn.split('Regular Price:')[0].strip():
+                            st.session_state.tags[idx]['productName'] = input_pn
+                            if input_pn and 'productName' in st.session_state.tags[idx].get('_missing_fields', []):
+                                st.session_state.tags[idx]['_missing_fields'].remove('productName')
+                            st.rerun()
+
+                        # SKU
+                        current_sku = tag_data.get('sku', '')
+                        label_sku = "SKU"
+                        if 'sku' in missing_fields:
+                            label_sku += " (REQUIRED)"
+                        
+                        input_sku = st.text_input(
+                            label_sku, 
+                            value=current_sku, 
+                            key=f"preview_sku_{idx}"
+                        )
+                        if input_sku != current_sku:
+                            st.session_state.tags[idx]['sku'] = input_sku
+                            # If SKU is updated, regenerate barcode and check missing status
+                            if input_sku:
+                                new_barcode = ''.join(filter(str.isalnum, input_sku))
+                                st.session_state.tags[idx]['barcode'] = new_barcode
+                                if 'sku' in st.session_state.tags[idx].get('_missing_fields', []):
+                                    st.session_state.tags[idx]['_missing_fields'].remove('sku')
+                                if new_barcode and 'barcode' in st.session_state.tags[idx].get('_missing_fields', []):
+                                     st.session_state.tags[idx]['_missing_fields'].remove('barcode')
+                            elif 'sku' not in st.session_state.tags[idx].get('_missing_fields', []):
+                                st.session_state.tags[idx].get('_missing_fields', []).append('sku') # SKUid removed, mark as missing
+                            st.rerun()
+
                     with cols[1]:
-                        st.write(f"${tag['price']}")
+                        # Price
+                        current_price = tag_data.get('price', '')
+                        label_price = "Price"
+                        if 'price' in missing_fields:
+                            label_price += " (REQUIRED)"
+                        
+                        input_price = st.text_input(
+                            label_price, 
+                            value=current_price, 
+                            key=f"preview_price_{idx}",
+                            help="Enter price without $ symbol"
+                        )
+                        if input_price != current_price:
+                            processed_price = input_price.replace('$', '').strip()
+                            st.session_state.tags[idx]['price'] = processed_price
+                            if processed_price and 'price' in st.session_state.tags[idx].get('_missing_fields', []):
+                                st.session_state.tags[idx]['_missing_fields'].remove('price')
+                            elif not processed_price and 'price' not in st.session_state.tags[idx].get('_missing_fields', []):
+                                st.session_state.tags[idx].get('_missing_fields', []).append('price')
+                            st.rerun()
             
             # Show generate button
             st.markdown("---")
-            if st.button("Generate PDF", type="primary"):
-                pdf = generate_pdf()
-                st.download_button(
-                    label="Download PDF",
-                    data=pdf,
-                    file_name="price_tags.pdf",
-                    mime="application/pdf"
-                )
+            
+            all_tags_valid = True
+            if st.session_state.tags: # Ensure tags exist before checking
+                for tag_check in st.session_state.tags:
+                    if tag_check.get('_missing_fields', []):
+                        all_tags_valid = False
+                        break
+            # If st.session_state.tags is empty, all_tags_valid remains True, generate_pdf should handle empty list.
+
+            if all_tags_valid:
+                if st.button("Generate PDF", type="primary", key="generate_pdf_button_main"):
+                    pdf = generate_pdf() # generate_pdf() should handle empty st.session_state.tags
+                    if pdf:
+                        st.download_button(
+                            label="Download PDF",
+                            data=pdf,
+                            file_name="price_tags.pdf",
+                            mime="application/pdf",
+                            key="download_pdf_button_main"
+                        )
+                    else:
+                        st.error("PDF generation failed or resulted in an empty document.")
+            else:
+                st.error("Please resolve all (REQUIRED) fields in the tags above before generating the PDF.")
+                # Show a disabled button for UX consistency
+                st.button("Generate PDF", type="primary", disabled=True, key="generate_pdf_button_disabled_main")
             
             # Show debug log at the bottom
             show_debug_log()
@@ -490,20 +584,39 @@ if st.session_state.tags:
     st.subheader("Current Tags")
     for idx, tag in enumerate(st.session_state.tags):
         # Clean up product name in expander title
-        product_name = tag['productName'].split('Regular Price:')[0].strip()
-        with st.expander(f"{product_name}"):
+        product_name = tag.get('productName', 'Unnamed Tag').split('Regular Price:')[0].strip()
+        missing_fields = tag.get('_missing_fields', [])
+        expander_title = product_name if product_name else "Tag (Missing Name)"
+        if not product_name and not tag.get('sku') and not tag.get('price'): # Likely an empty/failed OCR tag
+            expander_title = f"Tag {idx + 1} (Empty - Needs Review)"
+        elif missing_fields:
+            expander_title += " ⚠️ (NEEDS ATTENTION)"
+
+        with st.expander(expander_title):
+            if missing_fields:
+                st.warning("This tag has missing required information. Please fill in all (REQUIRED) fields below.")
+
             cols = st.columns([2, 1])
             
             with cols[0]:
                 # Editable fields for Product Name, SKU, and Price
+                # Editable Product Name
+                label_pn = "Product Name"
+                if 'productName' in missing_fields:
+                    label_pn += " (REQUIRED)"
                 new_product_name = st.text_input(
-                    "Product Name",
-                    value=tag['productName'],
+                    label_pn,
+                    value=tag.get('productName', ''),
                     key=f"product_name_edit_{idx}"
                 )
+
+                # Editable SKU
+                label_sku = "SKU"
+                if 'sku' in missing_fields:
+                    label_sku += " (REQUIRED)"
                 new_sku = st.text_input(
-                    "SKU",
-                    value=tag['sku'],
+                    label_sku,
+                    value=tag.get('sku', ''),
                     key=f"sku_edit_{idx}"
                 )
                 st.write(f"Barcode: {tag['barcode']}")
@@ -513,9 +626,13 @@ if st.session_state.tags:
             
             with cols[1]:
                 # Price editing
+                # Editable Price
+                label_price = "Price"
+                if 'price' in missing_fields:
+                    label_price += " (REQUIRED)"
                 new_price = st.text_input(
-                    "Price",
-                    value=tag['price'],
+                    label_price,
+                    value=tag.get('price', ''),
                     key=f"price_edit_{idx}",
                     help="Enter new price without $ symbol"
                 )
@@ -531,10 +648,51 @@ if st.session_state.tags:
                             new_price = new_price.replace('$', '')
                             # Ensure it's a valid number
                             float(new_price)  # This will raise ValueError if not a valid number
+                            # Process and validate price
+                            processed_price = new_price.replace('$', '').strip()
+                            float(processed_price) # Validate if it's a number, will raise ValueError if not
+
                             # Update fields in session state
                             st.session_state.tags[idx]['productName'] = new_product_name
                             st.session_state.tags[idx]['sku'] = new_sku
-                            st.session_state.tags[idx]['price'] = new_price
+                            st.session_state.tags[idx]['price'] = processed_price
+
+                            # Update missing fields list
+                            current_missing = list(st.session_state.tags[idx].get('_missing_fields', []))
+                            
+                            # Product Name
+                            if new_product_name and 'productName' in current_missing:
+                                current_missing.remove('productName')
+                            elif not new_product_name and 'productName' not in current_missing:
+                                current_missing.append('productName')
+                            
+                            # SKU & Barcode
+                            if new_sku and 'sku' in current_missing:
+                                current_missing.remove('sku')
+                            elif not new_sku and 'sku' not in current_missing:
+                                current_missing.append('sku')
+                            
+                            # Barcode depends on SKU
+                            if new_sku:
+                                new_barcode_val = ''.join(filter(str.isalnum, new_sku))
+                                st.session_state.tags[idx]['barcode'] = new_barcode_val
+                                if new_barcode_val and 'barcode' in current_missing:
+                                    current_missing.remove('barcode')
+                                elif not new_barcode_val and 'barcode' not in current_missing:
+                                    current_missing.append('barcode') # Should not happen if SKU is present
+                            else: # SKU is empty
+                                st.session_state.tags[idx]['barcode'] = ""
+                                if 'barcode' not in current_missing:
+                                    current_missing.append('barcode')
+
+                            # Price
+                            if processed_price and 'price' in current_missing:
+                                current_missing.remove('price')
+                            elif not processed_price and 'price' not in current_missing:
+                                current_missing.append('price')
+
+                            st.session_state.tags[idx]['_missing_fields'] = current_missing
+                            
                             st.success(f"Tag updated!")
                             st.rerun()
                         except ValueError:
