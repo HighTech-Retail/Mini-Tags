@@ -490,6 +490,10 @@ if uploaded_file:
                             elif not processed_price and 'price' not in st.session_state.tags[idx].get('_missing_fields', []):
                                 st.session_state.tags[idx].get('_missing_fields', []).append('price')
                             st.rerun()
+                
+                # Add a separator after each tag preview, except for the last one
+                if idx < len(st.session_state.tags) - 1:
+                    st.markdown("---")
             
             # Show generate button
             st.markdown("---")
