@@ -435,178 +435,132 @@ if uploaded_file:
             st.success(f"Found {len(tags)} valid tags!")
             st.session_state.tags = tags
             
-            # Show tag preview
+            # Show tag preview with form-based editing
             st.subheader("Preview of Extracted Tags")
             
             # Add Select All / Deselect All buttons
-            col1, col2, col3 = st.columns([1, 1, 2])
-            with col1:
-                if st.button("Select All Tags", key="select_all_tags"):
-                    # Set all tags to selected
+            col1_buttons, col2_buttons, col3_info = st.columns([1, 1, 2])
+            with col1_buttons:
+                if st.button("Select All Tags", key="select_all_tags_form"):
                     for i in range(len(st.session_state.tags)):
                         st.session_state.tags[i]['selected_for_print'] = True
-                    st.rerun()  # This rerun is intentional to update all checkboxes
-            
-            with col2:
-                if st.button("Deselect All", key="deselect_all_tags"):
-                    # Set all tags to not selected
+                    # No rerun needed here, form will handle UI update on submit or next natural rerun
+
+            with col2_buttons:
+                if st.button("Deselect All", key="deselect_all_tags_form"):
                     for i in range(len(st.session_state.tags)):
                         st.session_state.tags[i]['selected_for_print'] = False
-                    st.rerun()  # This rerun is intentional to update all checkboxes
-            
+                    # No rerun needed here
+
             # Display tag count information
-            with col3:
+            with col3_info:
                 selected_count = sum(1 for tag in st.session_state.tags if tag.get('selected_for_print', False))
                 st.write(f"Selected: {selected_count} of {len(st.session_state.tags)} tags")
-            
-            # Add a small space
-            st.write("")
-            
-            for idx, tag_data in enumerate(st.session_state.tags):
-                missing_fields = tag_data.get('_missing_fields', [])
-                
-                with st.container():
-                    if missing_fields:
-                        st.warning(f"Tag {idx + 1} has missing information. Please fill in the fields below.")
-                    
-                    cols = st.columns([3, 1])
-                    
-                    with cols[0]:
-                        # Product Name
-                        current_pn = tag_data.get('productName', '')
-                        label_pn = "Product Name"
-                        if 'productName' in missing_fields:
-                            label_pn += " (REQUIRED)"
-                        
-                        input_pn = st.text_input(
-                            label_pn, 
-                            value=current_pn.split('Regular Price:')[0].strip(), 
-                            key=f"preview_pn_{idx}"
-                        )
-                        if input_pn != current_pn.split('Regular Price:')[0].strip():
-                            # Simply update the value without any validation
-                            st.session_state.tags[idx]['productName'] = input_pn
-                            # We'll validate all fields only when generating PDF
+            st.write("") # Spacer
 
-                        # SKU
-                        current_sku = tag_data.get('sku', '')
-                        label_sku = "SKU"
-                        if 'sku' in missing_fields:
-                            label_sku += " (REQUIRED)"
-                        
-                        input_sku = st.text_input(
-                            label_sku, 
-                            value=current_sku, 
-                            key=f"preview_sku_{idx}"
-                        )
-                        if input_sku != current_sku:
-                            # Simply update the value
-                            st.session_state.tags[idx]['sku'] = input_sku
-                            
-                            # Auto-generate barcode from SKU if needed, but without validation
-                            if input_sku and not tag_data.get('barcode'):
-                                # Create a barcode by removing non-alphanumeric characters from SKU
-                                new_barcode = ''.join(filter(str.isalnum, input_sku))
-                                st.session_state.tags[idx]['barcode'] = new_barcode
+            # Add a form for tag editing
+            with st.form("tag_edit_form"):
+                for idx, tag_data in enumerate(st.session_state.tags):
+                    # We still need to check for missing fields to display warnings, 
+                    # but actual validation happens on PDF generation.
+                    missing_fields_display = []
+                    if not tag_data.get('productName'): missing_fields_display.append('Product Name')
+                    if not tag_data.get('sku'): missing_fields_display.append('SKU')
+                    if not tag_data.get('price'): missing_fields_display.append('Price')
+                    # Barcode can be auto-generated, so it's not strictly 'missing' here for display purposes yet.
 
-                    with cols[1]:
-                        # Checkbox for selecting tag to print
-                        # First, ensure the tag has the selected_for_print property initialized
-                        if 'selected_for_print' not in tag_data:
-                            st.session_state.tags[idx]['selected_for_print'] = False
+                    with st.container():
+                        if missing_fields_display:
+                            st.warning(f"Tag {idx + 1} appears to be missing: {', '.join(missing_fields_display)}. Please complete before generating PDF.")
                         
-                        # Create a unique key for this checkbox
-                        checkbox_key = f"select_print_{idx}"
+                        cols_form = st.columns([3, 1])
+                        with cols_form[0]:
+                            st.text_input("Product Name", value=tag_data.get('productName', ''), key=f"form_pn_{idx}")
+                            st.text_input("SKU", value=tag_data.get('sku', ''), key=f"form_sku_{idx}")
+                            st.text_input("Price", value=tag_data.get('price', ''), key=f"form_price_{idx}")
                         
-                        # The checkbox itself - using a key that includes the tag index
-                        # and the current value to prevent unwanted state changes
-                        is_selected = st.checkbox(
-                            "Select for Printing", 
-                            value=tag_data.get('selected_for_print', False),
-                            key=f"{checkbox_key}_{tag_data.get('selected_for_print', False)}"
-                        )
+                        with cols_form[1]:
+                            st.checkbox("Select for PDF", value=tag_data.get('selected_for_print', False), key=f"form_select_{idx}")
                         
-                        # Only update if the value has changed - use a simpler approach
-                        # that doesn't trigger heavy processing
-                        if is_selected != tag_data.get('selected_for_print', False):
-                            st.session_state.tags[idx]['selected_for_print'] = is_selected
-                            # We don't call st.rerun() here to avoid unnecessary processing
-                        
-                        # Price
-                        current_price = tag_data.get('price', '')
-                        label_price = "Price"
-                        if 'price' in missing_fields:
-                            label_price += " (REQUIRED)"
-                        
-                        input_price = st.text_input(
-                            label_price, 
-                            value=current_price, 
-                            key=f"preview_price_{idx}",
-                            help="Enter price without $ symbol"
-                        )
-                        if input_price != current_price:
-                            # Simply update the value without validation
-                            processed_price = input_price.replace('$', '').strip()
-                            st.session_state.tags[idx]['price'] = processed_price
+                        if idx < len(st.session_state.tags) - 1:
+                            st.markdown("---")
                 
-                # Add a separator after each tag preview, except for the last one
-                if idx < len(st.session_state.tags) - 1:
-                    st.markdown("---")
+                # Submit button for the form
+                if st.form_submit_button("Save Changes to Tags"):
+                    for i in range(len(st.session_state.tags)):
+                        st.session_state.tags[i]['productName'] = st.session_state[f"form_pn_{i}"]
+                        st.session_state.tags[i]['sku'] = st.session_state[f"form_sku_{i}"]
+                        st.session_state.tags[i]['price'] = st.session_state[f"form_price_{i}"].replace('$', '').strip()
+                        st.session_state.tags[i]['selected_for_print'] = st.session_state[f"form_select_{i}"]
+                        
+                        # Auto-generate barcode if SKU is provided and barcode is empty or not yet generated
+                        if st.session_state.tags[i]['sku'] and not st.session_state.tags[i].get('barcode'):
+                            st.session_state.tags[i]['barcode'] = ''.join(filter(str.isalnum, st.session_state.tags[i]['sku']))
+                    
+                    st.success("Changes saved! Ready to generate PDF if tags are complete.")
+                    # No st.rerun() needed, Streamlit handles form submission refresh.
             
             # Show generate button
             st.markdown("---")
             
-            # Get selected tags for PDF
+            # PDF Generation Section
+            st.markdown("---")
             selected_tags_for_pdf = [tag for tag in st.session_state.tags if tag.get('selected_for_print', False)]
 
             if not selected_tags_for_pdf:
-                st.info("No tags selected for printing. Please select tags using the checkboxes.")
-                st.button("Generate PDF", type="primary", disabled=True, key="generate_pdf_button_no_selection")
+                st.info("No tags currently selected for printing. Use the checkboxes in the form above and click 'Save Changes to Tags'.")
+                st.button("Generate PDF", type="primary", disabled=True, key="generate_pdf_button_no_selection_form")
             else:
-                # Only show the Generate PDF button - validation will happen when clicked
-                if st.button("Generate PDF for Selected Tags", type="primary", key="generate_pdf_button_selected"):
-                    # This is where we do the validation - only when the button is clicked
-                    with st.spinner("Validating tags and generating PDF..."):
-                        # Reset missing fields for all selected tags
-                        for idx, tag in enumerate(st.session_state.tags):
-                            if tag.get('selected_for_print', False):
-                                # Validate this tag
-                                missing = []
-                                if not tag.get('productName'): missing.append('productName')
-                                if not tag.get('sku'): missing.append('sku')
-                                if not tag.get('price'): missing.append('price')
-                                if not tag.get('barcode'): 
-                                    # Try to generate barcode from SKU if possible
-                                    if tag.get('sku'):
-                                        tag['barcode'] = ''.join(filter(str.isalnum, tag['sku']))
-                                    else:
-                                        missing.append('barcode')
-                                
-                                # Update missing fields
-                                tag['_missing_fields'] = missing
+                if st.button("Generate PDF for Selected Tags", type="primary", key="generate_pdf_button_form"):
+                    with st.spinner("Validating selected tags and generating PDF..."):
+                        # Validate all *selected* tags
+                        validated_selected_tags = []
+                        tags_with_errors = []
                         
-                        # Re-filter to get only selected tags
-                        selected_tags_for_pdf = [tag for tag in st.session_state.tags if tag.get('selected_for_print', False)]
+                        for tag_data in selected_tags_for_pdf: # Iterate over a copy
+                            current_missing_fields = []
+                            if not tag_data.get('productName'):
+                                current_missing_fields.append('Product Name')
+                            if not tag_data.get('sku'):
+                                current_missing_fields.append('SKU')
+                            if not tag_data.get('price'):
+                                current_missing_fields.append('Price')
+                            
+                            # Ensure barcode exists if SKU is present
+                            if tag_data.get('sku') and not tag_data.get('barcode'):
+                                tag_data['barcode'] = ''.join(filter(str.isalnum, tag_data['sku']))
+                            
+                            if not tag_data.get('barcode') and tag_data.get('sku'): # If SKU is there, barcode should be too
+                                current_missing_fields.append('Barcode (auto-generated from SKU if missing)')
+                            elif not tag_data.get('sku') and not tag_data.get('barcode'): # If no SKU, barcode is also an issue
+                                current_missing_fields.append('SKU (needed for Barcode)')
+                                current_missing_fields.append('Barcode')
+
+                            tag_data['_missing_fields'] = current_missing_fields # Update the original tag in session_state
+                            
+                            if current_missing_fields:
+                                tags_with_errors.append(tag_data)
+                            else:
+                                validated_selected_tags.append(tag_data)
                         
-                        # Check if any selected tags have missing fields
-                        invalid_tags = [tag for tag in selected_tags_for_pdf if tag.get('_missing_fields')]
-                        
-                        if invalid_tags:
-                            # Show error for invalid tags
-                            st.error(f"Cannot generate PDF: {len(invalid_tags)} selected tags have missing required fields.")
-                            for tag in invalid_tags:
-                                st.warning(f"Tag '{tag.get('productName', 'Unnamed')}' is missing: {', '.join(tag.get('_missing_fields', []))}")
+                        if tags_with_errors:
+                            st.error(f"Cannot generate PDF: {len(tags_with_errors)} selected tag(s) have missing required fields. Please review and save changes.")
+                            for err_tag in tags_with_errors:
+                                st.warning(f"Tag '{err_tag.get('productName', 'Unnamed Tag')}' (SKU: {err_tag.get('sku', 'N/A')}) is missing: {', '.join(err_tag['_missing_fields'])}")
+                            # It might be good to rerun to show the warnings in the form context if fields were auto-updated.
+                            # st.rerun() # Consider if this is good UX or if messages are enough.
+                        elif not validated_selected_tags: # Should not happen if selected_tags_for_pdf was not empty, but as a safeguard
+                            st.info("No valid tags selected for printing after validation.")
                         else:
-                            # All selected tags are valid, generate PDF
-                            pdf_data = generate_pdf(selected_tags_for_pdf)
+                            pdf_data = generate_pdf(validated_selected_tags)
                             if pdf_data:
-                                st.success(f"PDF generated successfully with {len(selected_tags_for_pdf)} tags!")
+                                st.success(f"PDF generated successfully with {len(validated_selected_tags)} tags!")
                                 st.download_button(
-                                    label="Download PDF",
+                                    label="Download PDF of Selected Tags",
                                     data=pdf_data,
-                                    file_name="price_tags.pdf",
+                                    file_name="price_tags_selected.pdf",
                                     mime="application/pdf",
-                                    key="download_pdf_button_selected"
+                                    key="download_pdf_button_form"
                                 )
                             else:
                                 st.error("PDF generation failed or resulted in an empty document.")
