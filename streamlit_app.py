@@ -495,10 +495,21 @@ if st.session_state.tags:
             cols = st.columns([2, 1])
             
             with cols[0]:
-                st.write(f"SKU: {tag['sku']}")
+                # Editable fields for Product Name, SKU, and Price
+                new_product_name = st.text_input(
+                    "Product Name",
+                    value=tag['productName'],
+                    key=f"product_name_edit_{idx}"
+                )
+                new_sku = st.text_input(
+                    "SKU",
+                    value=tag['sku'],
+                    key=f"sku_edit_{idx}"
+                )
                 st.write(f"Barcode: {tag['barcode']}")
-                if tag.get('description'):  # Use get() to avoid KeyError
+                if tag.get('description'):
                     st.write(f"Description: {tag['description']}")
+
             
             with cols[1]:
                 # Price editing
@@ -520,9 +531,11 @@ if st.session_state.tags:
                             new_price = new_price.replace('$', '')
                             # Ensure it's a valid number
                             float(new_price)  # This will raise ValueError if not a valid number
-                            # Update price in session state
+                            # Update fields in session state
+                            st.session_state.tags[idx]['productName'] = new_product_name
+                            st.session_state.tags[idx]['sku'] = new_sku
                             st.session_state.tags[idx]['price'] = new_price
-                            st.success(f"Price updated to ${new_price}")
+                            st.success(f"Tag updated!")
                             st.rerun()
                         except ValueError:
                             st.error("Please enter a valid price (numbers only)")
