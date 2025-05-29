@@ -191,12 +191,17 @@ def extract_text_from_pdf(pdf_path):
                 # Process each quarter
                 for j, quarter in enumerate(quarters):
                     try:
-                        tag = process_quarter(quarter, j)
-                        if tag and all(tag.get(field) for field in ['sku', 'productName', 'price', 'barcode']):
+                        tag = process_quarter(quarter, j) # process_quarter calls parse_single_tag
+                        if tag: # parse_single_tag now returns a dict (even with missing fields) or None
+                            tag['selected_for_print'] = False # Initialize selection state
                             all_tags.append(tag)
-                            add_to_debug_log(f"Successfully extracted tag: {tag['sku']}")
+                            if not tag.get('_missing_fields'):
+                                add_to_debug_log(f"Successfully extracted complete tag: {tag.get('sku', 'N/A')} on page {i+1}, quarter {j+1}")
+                            else:
+                                add_to_debug_log(f"Extracted tag with missing fields: {tag.get('sku', 'N/A')}, Missing: {tag['_missing_fields']} on page {i+1}, quarter {j+1}")
                         else:
-                            add_to_debug_log(f"Skipping invalid tag in page {i+1}, quarter {j+1}")
+                            # This 'else' means parse_single_tag returned None, indicating not a valid tag segment
+                            add_to_debug_log(f"Skipping invalid/empty segment in page {i+1}, quarter {j+1}")
                     except Exception as e:
                         add_to_debug_log(f"Error processing quarter {j+1} on page {i+1}: {str(e)}")
                         continue
@@ -320,7 +325,7 @@ def auto_split_text(text, max_width, c, initial_font_size=12):
     
     return [text], 9
 
-def generate_pdf():
+def generate_pdf(tags_to_print):
     buffer = io.BytesIO()
     page_width = 8.5 * inch
     page_height = 11 * inch
@@ -334,8 +339,12 @@ def generate_pdf():
     top_margin = page_height - inch
     
     # Process tags in groups of 6
-    for i in range(0, len(st.session_state.tags), 6):
-        group = st.session_state.tags[i:i+6]
+    if not tags_to_print:
+        add_to_debug_log("generate_pdf called with no tags to print.")
+        return None # Or handle as an empty PDF if preferred
+    
+    for i in range(0, len(tags_to_print), 6):
+        group = tags_to_print[i:i+6]
         y_position = top_margin
         
         for tag in group:
@@ -389,7 +398,7 @@ def generate_pdf():
             y_position -= tag_height + 0.2*inch
         
         # Start new page if we have more tags
-        if i + 6 < len(st.session_state.tags):
+        if i + 6 < len(tags_to_print):
             c.showPage()
             c.setFont('Helvetica', 12)
     
@@ -442,7 +451,7 @@ if uploaded_file:
                             st.session_state.tags[idx]['productName'] = input_pn
                             if input_pn and 'productName' in st.session_state.tags[idx].get('_missing_fields', []):
                                 st.session_state.tags[idx]['_missing_fields'].remove('productName')
-                            st.rerun()
+                            # REMOVED st.rerun()
 
                         # SKU
                         current_sku = tag_data.get('sku', '')
@@ -467,9 +476,19 @@ if uploaded_file:
                                      st.session_state.tags[idx]['_missing_fields'].remove('barcode')
                             elif 'sku' not in st.session_state.tags[idx].get('_missing_fields', []):
                                 st.session_state.tags[idx].get('_missing_fields', []).append('sku') # SKUid removed, mark as missing
-                            st.rerun()
+                            # REMOVED st.rerun()
 
                     with cols[1]:
+                        # Checkbox for selecting tag to print
+                        is_selected = st.checkbox(
+                            "Select for Printing", 
+                            value=tag_data.get('selected_for_print', False), 
+                            key=f"select_print_{idx}"
+                        )
+                        if is_selected != tag_data.get('selected_for_print', False):
+                            st.session_state.tags[idx]['selected_for_print'] = is_selected
+                            st.rerun()
+                        
                         # Price
                         current_price = tag_data.get('price', '')
                         label_price = "Price"
@@ -489,7 +508,7 @@ if uploaded_file:
                                 st.session_state.tags[idx]['_missing_fields'].remove('price')
                             elif not processed_price and 'price' not in st.session_state.tags[idx].get('_missing_fields', []):
                                 st.session_state.tags[idx].get('_missing_fields', []).append('price')
-                            st.rerun()
+                            # REMOVED st.rerun()
                 
                 # Add a separator after each tag preview, except for the last one
                 if idx < len(st.session_state.tags) - 1:
@@ -498,31 +517,34 @@ if uploaded_file:
             # Show generate button
             st.markdown("---")
             
-            all_tags_valid = True
-            if st.session_state.tags: # Ensure tags exist before checking
-                for tag_check in st.session_state.tags:
-                    if tag_check.get('_missing_fields', []):
-                        all_tags_valid = False
-                        break
-            # If st.session_state.tags is empty, all_tags_valid remains True, generate_pdf should handle empty list.
+            selected_tags_for_pdf = [tag for tag in st.session_state.tags if tag.get('selected_for_print', False)]
 
-            if all_tags_valid:
-                if st.button("Generate PDF", type="primary", key="generate_pdf_button_main"):
-                    pdf = generate_pdf() # generate_pdf() should handle empty st.session_state.tags
-                    if pdf:
-                        st.download_button(
-                            label="Download PDF",
-                            data=pdf,
-                            file_name="price_tags.pdf",
-                            mime="application/pdf",
-                            key="download_pdf_button_main"
-                        )
-                    else:
-                        st.error("PDF generation failed or resulted in an empty document.")
+            if not selected_tags_for_pdf:
+                st.info("No tags selected for printing. Please select tags in the preview area.")
+                st.button("Generate PDF", type="primary", disabled=True, key="generate_pdf_button_no_selection")
             else:
-                st.error("Please resolve all (REQUIRED) fields in the tags above before generating the PDF.")
-                # Show a disabled button for UX consistency
-                st.button("Generate PDF", type="primary", disabled=True, key="generate_pdf_button_disabled_main")
+                all_selected_tags_valid = True
+                for tag_check in selected_tags_for_pdf:
+                    if tag_check.get('_missing_fields', []):
+                        all_selected_tags_valid = False
+                        break
+                
+                if all_selected_tags_valid:
+                    if st.button("Generate PDF for Selected", type="primary", key="generate_pdf_button_selected"):
+                        pdf_data = generate_pdf(selected_tags_for_pdf)
+                        if pdf_data:
+                            st.download_button(
+                                label="Download PDF of Selected Tags",
+                                data=pdf_data,
+                                file_name="price_tags_selected.pdf",
+                                mime="application/pdf",
+                                key="download_pdf_button_selected"
+                            )
+                        else:
+                            st.error("PDF generation failed or resulted in an empty document for selected tags.")
+                else:
+                    st.error("Please resolve all (REQUIRED) fields in the *selected* tags before generating the PDF.")
+                    st.button("Generate PDF for Selected", type="primary", disabled=True, key="generate_pdf_button_selected_invalid")
             
             # Show debug log at the bottom
             show_debug_log()
@@ -575,13 +597,30 @@ with st.form("new_tag"):
     if submitted and product_name and price and sku and barcode:
         new_tag = {
             "productName": product_name,
-            "price": price,
+            "price": price.replace('$', '').strip(), # Ensure price is clean
             "sku": sku,
             "barcode": barcode,
-            "description": description
+            "description": description,
+            "selected_for_print": False,  # Initialize selection state
+            "_missing_fields": []       # Manually added tags are assumed complete from form
         }
+        # Basic validation for manually added tags
+        manual_missing = []
+        if not new_tag['productName']: manual_missing.append('productName')
+        if not new_tag['sku']: manual_missing.append('sku')
+        if not new_tag['price']: manual_missing.append('price')
+        if not new_tag['barcode']: manual_missing.append('barcode') # Barcode can be auto-generated if SKU is there
+        
+        if new_tag['sku'] and not new_tag['barcode']:
+            new_tag['barcode'] = ''.join(filter(str.isalnum, new_tag['sku']))
+            if 'barcode' in manual_missing: manual_missing.remove('barcode')
+
+        new_tag['_missing_fields'] = manual_missing
+
         st.session_state.tags.append(new_tag)
         st.success("Tag added successfully!")
+        if manual_missing:
+            st.warning(f"The manually added tag is missing: {', '.join(manual_missing)}. Please complete it in the 'Current Tags' section.")
 
 # Display and manage existing tags
 if st.session_state.tags:
